@@ -1,0 +1,19 @@
+# Environment variables & secrets
+.env
+.env.*
+*.env
+!.env.example
+
+# Logs and runtime files
+logs/
+*.log
+.pids
+
+# Dependencies & build outputs
+target/
+node_modules/
+dist/
+
+# OS files
+.DS_Store
+Thumbs.db
