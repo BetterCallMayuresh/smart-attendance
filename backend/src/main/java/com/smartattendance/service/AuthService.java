@@ -34,11 +34,16 @@ public class AuthService {
             throw new RuntimeException("Email already registered");
         }
 
-        Role role;
-        try {
-            role = Role.valueOf(request.getRole().toUpperCase());
-        } catch (IllegalArgumentException e) {
-            throw new RuntimeException("Invalid role: " + request.getRole());
+        Role role = Role.STUDENT;
+        if (request.getRole() != null) {
+            try {
+                Role requested = Role.valueOf(request.getRole().trim().toUpperCase());
+                if (requested == Role.STUDENT || requested == Role.FACULTY) {
+                    role = requested;
+                }
+            } catch (IllegalArgumentException ignored) {
+                // ADMIN or any unrecognized role — keep STUDENT
+            }
         }
 
         String studentId = request.getStudentId();

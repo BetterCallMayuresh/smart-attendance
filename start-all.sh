@@ -114,8 +114,7 @@ else
     MVN_CMD="mvn"
 fi
 
-(cd backend && $MVN_CMD spring-boot:run $PROFILE_ARG) > logs/backend.log 2>&1 &
-BACKEND_PID=$!
+(cd backend && DB_URL="$DB_URL" DB_USERNAME="$DB_USERNAME" DB_PASSWORD="$DB_PASSWORD" JWT_SECRET="$JWT_SECRET" $MVN_CMD spring-boot:run $PROFILE_ARG) > logs/backend.log 2>&1 &BACKEND_PID=$!
 echo "$BACKEND_PID" >> "$PID_FILE"
 echo -e "  ${GREEN}✓ Backend starting (PID: $BACKEND_PID)...${NC}"
 

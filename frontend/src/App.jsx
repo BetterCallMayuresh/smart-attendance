@@ -1,39 +1,49 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ToastProvider } from './context/ToastContext';
 import Navbar from './components/Navbar';
 import ProtectedRoute from './components/ProtectedRoute';
+import CommandPalette from './components/CommandPalette';
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import StudentDashboard from './pages/StudentDashboard';
+import StudentDevicesPage from './pages/StudentDevicesPage';
 import FacultyDashboard from './pages/FacultyDashboard';
+import FacultySessionsPage from './pages/FacultySessionsPage';
 import AdminDashboard from './pages/AdminDashboard';
+import AdminUsersPage from './pages/AdminUsersPage';
+import AdminClassroomsPage from './pages/AdminClassroomsPage';
 import Reports from './pages/Reports';
 import './index.css';
 
 function AppRoutes() {
   const { user } = useAuth();
+  const location = useLocation();
 
-  // Redirect root based on role
   const getHomeRoute = () => {
-    if (!user) return '/login';
+    if (!user) return '/';
     const routes = {
       STUDENT: '/student',
       FACULTY: '/faculty',
       ADMIN: '/admin',
     };
-    return routes[user.role] || '/login';
+    return routes[user.role] || '/';
   };
+
+  const publicFullBleed =
+    !user && ['/', '/login', '/register'].includes(location.pathname);
 
   return (
     <>
       <Navbar />
-      <main className="main-content">
+      <CommandPalette />
+      <main className={publicFullBleed ? 'public-shell' : 'main-content'}>
         <Routes>
-          <Route path="/" element={<Navigate to={getHomeRoute()} replace />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+          <Route path="/" element={user ? <Navigate to={getHomeRoute()} replace /> : <Landing />} />
+          <Route path="/login" element={user ? <Navigate to={getHomeRoute()} replace /> : <Login />} />
+          <Route path="/register" element={user ? <Navigate to={getHomeRoute()} replace /> : <Register />} />
 
-          {/* Student Routes */}
           <Route
             path="/student"
             element={
@@ -46,12 +56,11 @@ function AppRoutes() {
             path="/student/devices"
             element={
               <ProtectedRoute roles={['STUDENT']}>
-                <StudentDashboard />
+                <StudentDevicesPage />
               </ProtectedRoute>
             }
           />
 
-          {/* Faculty Routes */}
           <Route
             path="/faculty"
             element={
@@ -64,12 +73,11 @@ function AppRoutes() {
             path="/faculty/sessions"
             element={
               <ProtectedRoute roles={['FACULTY']}>
-                <FacultyDashboard />
+                <FacultySessionsPage />
               </ProtectedRoute>
             }
           />
 
-          {/* Admin Routes */}
           <Route
             path="/admin"
             element={
@@ -82,12 +90,19 @@ function AppRoutes() {
             path="/admin/users"
             element={
               <ProtectedRoute roles={['ADMIN']}>
-                <AdminDashboard />
+                <AdminUsersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/classrooms"
+            element={
+              <ProtectedRoute roles={['ADMIN']}>
+                <AdminClassroomsPage />
               </ProtectedRoute>
             }
           />
 
-          {/* Reports — accessible by faculty and admin */}
           <Route
             path="/reports"
             element={
@@ -97,7 +112,6 @@ function AppRoutes() {
             }
           />
 
-          {/* Catch-all */}
           <Route path="*" element={<Navigate to={getHomeRoute()} replace />} />
         </Routes>
       </main>
@@ -109,7 +123,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <ToastProvider>
+          <AppRoutes />
+        </ToastProvider>
       </AuthProvider>
     </BrowserRouter>
   );

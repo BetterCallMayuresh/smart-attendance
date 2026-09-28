@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { studentAPI } from '../api/api';
+import AttendanceHeatmap from '../components/AttendanceHeatmap';
+import PercentRing from '../components/PercentRing';
+import ConfidenceBadge from '../components/ConfidenceBadge';
 
 export default function StudentDashboard() {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [showDeviceForm, setShowDeviceForm] = useState(false);
-  const [deviceForm, setDeviceForm] = useState({ macAddress: '', deviceName: '' });
-  const [message, setMessage] = useState('');
 
   useEffect(() => {
     loadDashboard();
@@ -23,20 +24,6 @@ export default function StudentDashboard() {
     }
   };
 
-  const handleRegisterDevice = async (e) => {
-    e.preventDefault();
-    setMessage('');
-    try {
-      await studentAPI.registerDevice(deviceForm);
-      setMessage('Device registered! Awaiting admin approval.');
-      setDeviceForm({ macAddress: '', deviceName: '' });
-      setShowDeviceForm(false);
-      loadDashboard();
-    } catch (err) {
-      setMessage(err.response?.data?.message || 'Failed to register device');
-    }
-  };
-
   if (loading) {
     return (
       <div className="page-loading">
@@ -45,33 +32,63 @@ export default function StudentDashboard() {
     );
   }
 
+  const live = dashboard?.liveSession;
+
   return (
     <div className="dashboard-page">
       <div className="page-header">
         <h1>Student Dashboard</h1>
-        <p>Track your attendance and manage your devices</p>
+        <p>Your presence story across the semester</p>
       </div>
 
-      {message && (
-        <div className={`alert ${message.includes('Failed') ? 'alert-error' : 'alert-success'}`}>
-          {message}
+      {live && (
+        <div className={`active-session-banner ${live.alreadyMarked ? '' : 'stat-warning'}`}>
+          <div className="session-info">
+            <div className="pulse-dot"></div>
+            <div>
+              <h2>{live.alreadyMarked ? 'You are marked present' : 'Class is live'}</h2>
+              <p>
+                {live.courseName} ({live.courseCode}) — keep your device on classroom Wi-Fi
+              </p>
+            </div>
+          </div>
+          <Link to="/student/devices" className="btn btn-secondary">
+            Check device
+          </Link>
         </div>
       )}
 
-      {/* Stats Cards */}
+      <div className="command-grid">
+        <div className="card ring-card">
+          <PercentRing value={dashboard?.attendancePercent || 0} label="Semester presence" />
+          <p className="text-muted">
+            {dashboard?.totalClasses || 0} of {dashboard?.totalSessions || 0} sessions
+          </p>
+        </div>
+        <div className="card">
+          <div className="card-header">
+            <h2>12-week heatmap</h2>
+            <Link to="/student/devices">Manage devices →</Link>
+          </div>
+          <div className="card-pad">
+            <AttendanceHeatmap days={dashboard?.heatmap || []} />
+          </div>
+        </div>
+      </div>
+
       <div className="stats-grid">
         <div className="stat-card">
           <div className="stat-icon">📋</div>
           <div className="stat-content">
             <span className="stat-value">{dashboard?.totalClasses || 0}</span>
-            <span className="stat-label">Total Classes Attended</span>
+            <span className="stat-label">Classes attended</span>
           </div>
         </div>
         <div className="stat-card">
           <div className="stat-icon">📱</div>
           <div className="stat-content">
             <span className="stat-value">{dashboard?.devices?.length || 0}</span>
-            <span className="stat-label">Registered Devices</span>
+            <span className="stat-label">Devices</span>
           </div>
         </div>
         <div className="stat-card">
@@ -80,103 +97,14 @@ export default function StudentDashboard() {
             <span className="stat-value">
               {dashboard?.devices?.filter((d) => d.approved).length || 0}
             </span>
-            <span className="stat-label">Approved Devices</span>
+            <span className="stat-label">Approved</span>
           </div>
         </div>
       </div>
 
-      {/* Devices Section */}
       <div className="card">
         <div className="card-header">
-          <h2>My Devices</h2>
-          <button
-            className="btn btn-primary"
-            onClick={() => setShowDeviceForm(!showDeviceForm)}
-          >
-            {showDeviceForm ? 'Cancel' : '+ Register Device'}
-          </button>
-        </div>
-
-        {showDeviceForm && (
-          <form className="inline-form" onSubmit={handleRegisterDevice}>
-            <div className="form-row">
-              <div className="form-group">
-                <label htmlFor="macAddress">MAC Address</label>
-                <input
-                  id="macAddress"
-                  type="text"
-                  placeholder="AA:BB:CC:DD:EE:FF"
-                  value={deviceForm.macAddress}
-                  onChange={(e) =>
-                    setDeviceForm({ ...deviceForm, macAddress: e.target.value })
-                  }
-                  required
-                  pattern="^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="deviceName">Device Name (optional)</label>
-                <input
-                  id="deviceName"
-                  type="text"
-                  placeholder="e.g. My Phone"
-                  value={deviceForm.deviceName}
-                  onChange={(e) =>
-                    setDeviceForm({ ...deviceForm, deviceName: e.target.value })
-                  }
-                />
-              </div>
-              <button type="submit" className="btn btn-primary">
-                Submit
-              </button>
-            </div>
-          </form>
-        )}
-
-        <div className="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Device</th>
-                <th>MAC Address</th>
-                <th>Status</th>
-                <th>Registered</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dashboard?.devices?.length > 0 ? (
-                dashboard.devices.map((device) => (
-                  <tr key={device.id}>
-                    <td>{device.deviceName || 'Unnamed Device'}</td>
-                    <td>
-                      <code>{device.macAddress}</code>
-                    </td>
-                    <td>
-                      <span
-                        className={`badge ${device.approved ? 'badge-success' : 'badge-warning'}`}
-                      >
-                        {device.approved ? 'Approved' : 'Pending'}
-                      </span>
-                    </td>
-                    <td>{new Date(device.createdAt).toLocaleDateString()}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan="4" className="empty-state">
-                    No devices registered yet
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Attendance History */}
-      <div className="card">
-        <div className="card-header">
-          <h2>Attendance History</h2>
+          <h2>Attendance history</h2>
         </div>
         <div className="table-container">
           <table>
@@ -185,6 +113,7 @@ export default function StudentDashboard() {
                 <th>Course</th>
                 <th>Code</th>
                 <th>Status</th>
+                <th>Confidence</th>
                 <th>Date & Time</th>
               </tr>
             </thead>
@@ -200,19 +129,22 @@ export default function StudentDashboard() {
                           record.status === 'AUTO'
                             ? 'badge-success'
                             : record.status === 'MANUAL'
-                            ? 'badge-info'
-                            : 'badge-warning'
+                              ? 'badge-info'
+                              : 'badge-warning'
                         }`}
                       >
                         {record.status}
                       </span>
+                    </td>
+                    <td>
+                      <ConfidenceBadge level={record.confidenceLevel} score={record.confidenceScore} />
                     </td>
                     <td>{new Date(record.markedAt).toLocaleString()}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="4" className="empty-state">
+                  <td colSpan="5" className="empty-state">
                     No attendance records yet
                   </td>
                 </tr>

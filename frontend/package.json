@@ -15,6 +15,9 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
+    "recharts": "^3.2.0",
+    "jspdf": "^3.0.3",
+    "jspdf-autotable": "^5.0.2",
     "sockjs-client": "^1.6.1"
   },
   "devDependencies": {

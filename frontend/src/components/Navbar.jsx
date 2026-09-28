@@ -1,14 +1,17 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [open, setOpen] = useState(false);
 
   const handleLogout = () => {
     logout();
-    navigate('/login');
+    setOpen(false);
+    navigate('/');
   };
 
   if (!user) return null;
@@ -19,12 +22,13 @@ export default function Navbar() {
       { to: '/student/devices', label: 'Devices', icon: '📱' },
     ],
     FACULTY: [
-      { to: '/faculty', label: 'Dashboard', icon: '📊' },
+      { to: '/faculty', label: 'Radar', icon: '📡' },
       { to: '/faculty/sessions', label: 'Sessions', icon: '📋' },
       { to: '/reports', label: 'Reports', icon: '📈' },
     ],
     ADMIN: [
-      { to: '/admin', label: 'Dashboard', icon: '⚙️' },
+      { to: '/admin', label: 'Devices', icon: '⚙️' },
+      { to: '/admin/classrooms', label: 'Rooms', icon: '📶' },
       { to: '/admin/users', label: 'Users', icon: '👥' },
       { to: '/reports', label: 'Reports', icon: '📈' },
     ],
@@ -39,12 +43,22 @@ export default function Navbar() {
         <span className="navbar-title">SmartAttend</span>
       </div>
 
-      <div className="navbar-links">
+      <button
+        type="button"
+        className="nav-toggle"
+        aria-label="Menu"
+        onClick={() => setOpen((v) => !v)}
+      >
+        ☰
+      </button>
+
+      <div className={`navbar-links ${open ? 'open' : ''}`}>
         {links.map((link) => (
           <Link
             key={link.to}
             to={link.to}
             className={`nav-link ${location.pathname === link.to ? 'active' : ''}`}
+            onClick={() => setOpen(false)}
           >
             <span className="nav-icon">{link.icon}</span>
             <span>{link.label}</span>

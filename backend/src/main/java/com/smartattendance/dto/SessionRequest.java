@@ -10,4 +10,7 @@ public class SessionRequest {
     private String courseName;
 
     private String courseCode;
+
+    /** Optional room binding; when set, attendance requires proximity to its AP. */
+    private Long classroomId;
 }

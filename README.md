@@ -2,6 +2,17 @@
 
 SmartAttend is an automated, real-time attendance management system that uses local network presence detection (ARP table scanning) combined with WebSocket event streaming to seamlessly verify student attendance during active class sessions without requiring dedicated biometric or RFID hardware.
 
+> **New to this codebase?** Read [`docs/FINAL_PROJECT_ANALYSIS.md`](docs/FINAL_PROJECT_ANALYSIS.md) —
+> a complete internals walkthrough covering the detection pipeline, the confidence
+> scoring algorithm, the database schema, every API endpoint, the security model, and an
+> honest account of the system's limitations. Payload examples live in
+> [`docs/api-contract.md`](docs/api-contract.md).
+>
+> For sharing or submission, the same analysis is available as
+> [`FINAL_PROJECT_ANALYSIS.pdf`](docs/FINAL_PROJECT_ANALYSIS.pdf) (16 pages, A4) and
+> [`FINAL_PROJECT_ANALYSIS.html`](docs/FINAL_PROJECT_ANALYSIS.html). Regenerate both with
+> `python3 docs/build-analysis-doc.py` after editing the Markdown.
+
 ---
 
 ## 🏛️ System Architecture
@@ -22,6 +33,20 @@ SmartAttend is an automated, real-time attendance management system that uses lo
                                                       • Admin Device Approval Queue
                                                       • Attendance Reporting & CSV Export
 ```
+
+---
+
+## 🧪 Demo accounts (seeded on first empty database)
+
+| Role | Email | Password |
+| :--- | :--- | :--- |
+| Admin | `admin@smartattend.edu` | `Demo@123` |
+| Faculty | `faculty@smartattend.edu` | `Demo@123` |
+| Student | `student1@smartattend.edu` | `Demo@123` |
+
+Open **Faculty → Presence Command Center**, start a session, then **Run demo classroom** to inject ARP events without lab Wi-Fi.
+
+Swagger UI: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
 
 ---
 

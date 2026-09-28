@@ -77,29 +77,52 @@ public class PresenceIngestionService {
             String type = json.path("type").asText();
 
             if ("presence_event".equals(type)) {
-                String mac = json.path("mac").asText();
-                String ip = json.path("ip").asText();
                 String status = json.path("status").asText();
 
                 if ("connected".equals(status)) {
                     // Process: try to match MAC to student and mark attendance
-                    attendanceService.processPresenceEvent(mac, ip);
+                    attendanceService.processPresenceEvent(
+                            json.path("mac").asText(),
+                            json.path("ip").asText(),
+                            textOrNull(json, "bssid"),
+                            intOrNull(json, "rssi"));
                 }
                 // "disconnected" events are logged but don't un-mark attendance
             } else if ("snapshot".equals(type)) {
                 // Full snapshot: process all devices
+                String snapshotBssid = textOrNull(json, "bssid");
                 JsonNode devices = json.path("devices");
                 if (devices.isArray()) {
                     for (JsonNode device : devices) {
-                        String mac = device.path("mac").asText();
-                        String ip = device.path("ip").asText();
-                        attendanceService.processPresenceEvent(mac, ip);
+                        String deviceBssid = textOrNull(device, "bssid");
+                        attendanceService.processPresenceEvent(
+                                device.path("mac").asText(),
+                                device.path("ip").asText(),
+                                deviceBssid != null ? deviceBssid : snapshotBssid,
+                                intOrNull(device, "rssi"));
                     }
                 }
             }
         } catch (Exception e) {
             System.err.println("[PresenceIngestion] Error processing message: " + e.getMessage());
         }
+    }
+
+    private static String textOrNull(JsonNode node, String field) {
+        JsonNode value = node.path(field);
+        if (value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        String text = value.asText();
+        return text.isBlank() ? null : text;
+    }
+
+    private static Integer intOrNull(JsonNode node, String field) {
+        JsonNode value = node.path(field);
+        if (value.isMissingNode() || value.isNull() || !value.isNumber()) {
+            return null;
+        }
+        return value.asInt();
     }
 
     private void scheduleReconnect() {

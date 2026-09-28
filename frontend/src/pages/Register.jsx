@@ -104,12 +104,12 @@ export default function Register() {
 
           {form.role === 'STUDENT' && (
             <div className="form-group">
-              <label htmlFor="studentId">Student / Roll Number</label>
+              <label htmlFor="studentId">PRN</label>
               <input
                 id="studentId"
                 name="studentId"
-                type="text"
-                placeholder="e.g. CS2024001"
+                type="number"
+                placeholder="e.g. 72318401"
                 value={form.studentId}
                 onChange={handleChange}
               />

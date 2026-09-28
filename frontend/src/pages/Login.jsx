@@ -25,7 +25,11 @@ export default function Login() {
       };
       navigate(routes[data.role] || '/');
     } catch (err) {
-      setError(err.response?.data?.message || 'Invalid credentials');
+      if (!err.response) {
+        setError('Backend is not running on port 8080. Start it with ./start-all.sh');
+      } else {
+        setError(err.response?.data?.message || 'Invalid credentials');
+      }
     } finally {
       setLoading(false);
     }
@@ -75,6 +79,9 @@ export default function Login() {
 
           <p className="auth-switch">
             Don&apos;t have an account? <Link to="/register">Register</Link>
+          </p>
+          <p className="demo-hint">
+            Demo: <code>faculty@smartattend.edu</code> / <code>Demo@123</code>
           </p>
         </form>
       </div>

@@ -1,24 +1,47 @@
 import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
-import { facultyAPI } from '../api/api';
+import { facultyAPI, WS_URL } from '../api/api';
+import PresenceRadar from '../components/PresenceRadar';
+import ConfidenceBadge from '../components/ConfidenceBadge';
+import { useToast } from '../context/ToastContext';
 
 export default function FacultyDashboard() {
   const [activeSession, setActiveSession] = useState(null);
   const [attendees, setAttendees] = useState([]);
-  const [sessionForm, setSessionForm] = useState({ courseName: '', courseCode: '' });
+  const [rejected, setRejected] = useState([]);
+  const [devices, setDevices] = useState([]);
+  const [wireless, setWireless] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState('');
+  const [simulating, setSimulating] = useState(false);
+  const [manualPRN, setManualPRN] = useState('');
   const stompClient = useRef(null);
+  const toast = useToast();
 
   useEffect(() => {
     loadActiveSession();
     return () => {
-      if (stompClient.current) {
-        stompClient.current.deactivate();
-      }
+      if (stompClient.current) stompClient.current.deactivate();
     };
   }, []);
+
+  useEffect(() => {
+    if (!activeSession) return undefined;
+    const tick = async () => {
+      try {
+        const res = await facultyAPI.getLivePresence();
+        const payload = res.data.data || {};
+        setDevices(payload.devices || []);
+        setWireless(payload.wireless || null);
+      } catch {
+        /* presence service is optional */
+      }
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => clearInterval(id);
+  }, [activeSession]);
 
   const loadActiveSession = async () => {
     try {
@@ -38,18 +61,15 @@ export default function FacultyDashboard() {
 
   const connectWebSocket = (sessionId) => {
     const client = new Client({
-      webSocketFactory: () => new SockJS('http://localhost:8080/ws'),
+      webSocketFactory: () => new SockJS(WS_URL),
       onConnect: () => {
-        console.log('[WS] Connected to live attendance feed');
         client.subscribe(`/topic/session/${sessionId}`, (msg) => {
           const update = JSON.parse(msg.body);
+
           if (update.type === 'attendance_marked') {
+            setRejected((prev) => prev.filter((r) => r.studentId !== update.studentId));
             setAttendees((prev) => {
-              // Avoid duplicates
-              const exists = prev.find(
-                (a) => a.studentId === update.studentId
-              );
-              if (exists) return prev;
+              if (prev.some((a) => a.studentId === update.studentId)) return prev;
               return [
                 ...prev,
                 {
@@ -59,31 +79,47 @@ export default function FacultyDashboard() {
                   status: update.status,
                   markedAt: update.markedAt,
                   deviceMac: update.mac,
+                  deviceIp: update.ip,
+                  observedBssid: update.bssid,
+                  signalDbm: update.rssi,
+                  confidenceScore: update.confidenceScore,
+                  confidenceLevel: update.confidenceLevel,
+                  confidenceReasons: Array.isArray(update.confidenceReasons)
+                    ? update.confidenceReasons.join('; ')
+                    : update.confidenceReasons,
+                },
+              ];
+            });
+          }
+
+          if (update.type === 'presence_rejected') {
+            setRejected((prev) => {
+              if (prev.some((r) => r.mac === update.mac)) return prev;
+              return [
+                ...prev,
+                {
+                  studentId: update.studentId,
+                  studentName: update.studentName,
+                  studentRollNo: update.studentRollNo,
+                  mac: update.mac,
+                  ip: update.ip,
+                  bssid: update.bssid,
+                  rssi: update.rssi,
+                  confidenceScore: update.confidenceScore,
+                  confidenceLevel: update.confidenceLevel,
+                  reasons: Array.isArray(update.confidenceReasons)
+                    ? update.confidenceReasons
+                    : [update.confidenceReasons].filter(Boolean),
+                  seenAt: update.seenAt,
                 },
               ];
             });
           }
         });
       },
-      onDisconnect: () => console.log('[WS] Disconnected'),
     });
     client.activate();
     stompClient.current = client;
-  };
-
-  const handleStartSession = async (e) => {
-    e.preventDefault();
-    setMessage('');
-    try {
-      const res = await facultyAPI.startSession(sessionForm);
-      const session = res.data.data;
-      setActiveSession(session);
-      setAttendees([]);
-      connectWebSocket(session.id);
-      setMessage('Session started! Listening for devices...');
-    } catch (err) {
-      setMessage(err.response?.data?.message || 'Failed to start session');
-    }
   };
 
   const handleEndSession = async () => {
@@ -93,9 +129,42 @@ export default function FacultyDashboard() {
       if (stompClient.current) stompClient.current.deactivate();
       setActiveSession(null);
       setAttendees([]);
-      setMessage('Session ended successfully');
+      setRejected([]);
+      toast.success('Session ended');
     } catch (err) {
-      setMessage(err.response?.data?.message || 'Failed to end session');
+      toast.error(err.response?.data?.message || 'Failed to end session');
+    }
+  };
+
+  const handleManualMark = async () => {
+    if (!activeSession) {
+      toast.error('No active session');
+      return;
+    }
+    if (!manualPRN.trim()) {
+      toast.error('Enter a PRN');
+      return;
+    }
+    try {
+      await facultyAPI.manualMarkByPRN(activeSession.id, manualPRN.trim());
+      toast.success('Student marked present');
+      setManualPRN('');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to mark student');
+    }
+  };
+
+  const handleSimulate = async () => {
+    setSimulating(true);
+    try {
+      await facultyAPI.simulateClassroom({ count: 10, intervalMs: 1200, outsideCount: 2 });
+      toast.success('Demo stream started: 8 in the room, 2 in the corridor');
+    } catch (err) {
+      toast.error(
+        err.response?.data?.message || 'Simulator unavailable — is presence-service running?'
+      );
+    } finally {
+      setSimulating(false);
     }
   };
 
@@ -107,60 +176,29 @@ export default function FacultyDashboard() {
     );
   }
 
+  const room = activeSession?.classroom;
+
   return (
     <div className="dashboard-page">
       <div className="page-header">
-        <h1>Faculty Dashboard</h1>
-        <p>Manage class sessions and view live attendance</p>
+        <h1>Presence Command Center</h1>
+        <p>Room-level attendance proven against the classroom access point</p>
       </div>
 
-      {message && (
-        <div className={`alert ${message.includes('Failed') ? 'alert-error' : 'alert-success'}`}>
-          {message}
-        </div>
-      )}
-
       {!activeSession ? (
-        /* Start Session Form */
         <div className="card">
-          <div className="card-header">
-            <h2>Start New Session</h2>
+          <div className="empty-state" style={{ padding: '3rem 1.5rem', textAlign: 'center' }}>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📡</div>
+            <h2>No active session</h2>
+            <p className="text-muted" style={{ margin: '0.5rem 0 1.5rem' }}>
+              Start a session and bind it to a room, then run the demo classroom.
+            </p>
+            <Link to="/faculty/sessions" className="btn btn-primary">
+              Go to Sessions
+            </Link>
           </div>
-          <form className="session-form" onSubmit={handleStartSession}>
-            <div className="form-row">
-              <div className="form-group">
-                <label htmlFor="courseName">Course Name</label>
-                <input
-                  id="courseName"
-                  type="text"
-                  placeholder="e.g. Computer Networks"
-                  value={sessionForm.courseName}
-                  onChange={(e) =>
-                    setSessionForm({ ...sessionForm, courseName: e.target.value })
-                  }
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="courseCode">Course Code</label>
-                <input
-                  id="courseCode"
-                  type="text"
-                  placeholder="e.g. CS301"
-                  value={sessionForm.courseCode}
-                  onChange={(e) =>
-                    setSessionForm({ ...sessionForm, courseCode: e.target.value })
-                  }
-                />
-              </div>
-              <button type="submit" className="btn btn-primary">
-                🚀 Start Session
-              </button>
-            </div>
-          </form>
         </div>
       ) : (
-        /* Active Session View */
         <>
           <div className="active-session-banner">
             <div className="session-info">
@@ -171,47 +209,131 @@ export default function FacultyDashboard() {
                   {activeSession.courseCode} • Started{' '}
                   {new Date(activeSession.startTime).toLocaleTimeString()}
                 </p>
+                {room ? (
+                  <p className="room-line">
+                    {room.name} • AP <code>{room.bssid}</code> • cutoff {room.minRssiDbm} dBm
+                  </p>
+                ) : (
+                  <p className="room-line warn">
+                    Not bound to a room — network presence only, cannot prove room attendance
+                  </p>
+                )}
               </div>
             </div>
-            <button className="btn btn-danger" onClick={handleEndSession}>
-              ⏹ End Session
-            </button>
-          </div>
-
-          {/* Stats */}
-          <div className="stats-grid">
-            <div className="stat-card stat-live">
-              <div className="stat-icon">👥</div>
-              <div className="stat-content">
-                <span className="stat-value">{attendees.length}</span>
-                <span className="stat-label">Students Present</span>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-icon">🤖</div>
-              <div className="stat-content">
-                <span className="stat-value">
-                  {attendees.filter((a) => a.status === 'AUTO').length}
-                </span>
-                <span className="stat-label">Auto-Detected</span>
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-icon">✋</div>
-              <div className="stat-content">
-                <span className="stat-value">
-                  {attendees.filter((a) => a.status === 'MANUAL').length}
-                </span>
-                <span className="stat-label">Manual</span>
-              </div>
+            <div className="banner-actions">
+              <button className="btn btn-secondary" onClick={handleSimulate} disabled={simulating}>
+                {simulating ? 'Injecting…' : '▶ Run demo classroom'}
+              </button>
+              <button className="btn btn-danger" onClick={handleEndSession}>
+                End Session
+              </button>
             </div>
           </div>
 
-          {/* Live Attendee List */}
+          <div className="command-grid">
+            <div className="card radar-card">
+              <div className="card-header">
+                <h2>Network presence radar</h2>
+                <span className="text-muted">
+                  {devices.length} ARP entries
+                  {wireless?.bssid ? ` • scanner on ${wireless.bssid}` : ''}
+                </span>
+              </div>
+              <PresenceRadar attendees={attendees} devices={devices} rejected={rejected} />
+            </div>
+
+            <div>
+              <div className="stats-grid compact">
+                <div className="stat-card stat-live">
+                  <div className="stat-icon">👥</div>
+                  <div className="stat-content">
+                    <span className="stat-value">{attendees.length}</span>
+                    <span className="stat-label">Marked present</span>
+                  </div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-icon">🛡</div>
+                  <div className="stat-content">
+                    <span className="stat-value">
+                      {attendees.filter((a) => a.confidenceLevel === 'HIGH').length}
+                    </span>
+                    <span className="stat-label">Room-verified</span>
+                  </div>
+                </div>
+                <div className="stat-card stat-warning">
+                  <div className="stat-icon">🚫</div>
+                  <div className="stat-content">
+                    <span className="stat-value">{rejected.length}</span>
+                    <span className="stat-label">Seen but refused</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="card">
+                <div className="card-header">
+                  <h2>Manual mark</h2>
+                </div>
+                <div className="inline-form">
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>PRN</label>
+                      <input
+                        type="text"
+                        placeholder="CS2024D01"
+                        value={manualPRN}
+                        onChange={(e) => setManualPRN(e.target.value)}
+                      />
+                    </div>
+                    <button className="btn btn-primary" onClick={handleManualMark}>
+                      Mark present
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {rejected.length > 0 && (
+            <div className="card refused-card">
+              <div className="card-header">
+                <h2>Seen on the network, not marked</h2>
+                <span className="text-muted">
+                  Below the confidence cutoff — no attendance was recorded
+                </span>
+              </div>
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Student</th>
+                      <th>Access point</th>
+                      <th>Signal</th>
+                      <th>Score</th>
+                      <th>Why it was refused</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rejected.map((r) => (
+                      <tr key={r.mac} className="fade-in-row">
+                        <td className="student-name">{r.studentName}</td>
+                        <td><code>{r.bssid || '—'}</code></td>
+                        <td>{r.rssi != null ? `${r.rssi} dBm` : '—'}</td>
+                        <td>
+                          <ConfidenceBadge level={r.confidenceLevel} score={r.confidenceScore} />
+                        </td>
+                        <td className="reason-cell">{r.reasons.join('; ')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <div className="card">
             <div className="card-header">
               <h2>
-                <span className="pulse-dot-sm"></span> Live Attendance
+                <span className="pulse-dot-sm"></span> Live feed
               </h2>
             </div>
             <div className="table-container">
@@ -220,9 +342,11 @@ export default function FacultyDashboard() {
                   <tr>
                     <th>#</th>
                     <th>Student</th>
-                    <th>Roll No</th>
+                    <th>PRN</th>
                     <th>Method</th>
-                    <th>Device</th>
+                    <th>Confidence</th>
+                    <th>AP / Signal</th>
+                    <th>IP / MAC</th>
                     <th>Time</th>
                   </tr>
                 </thead>
@@ -235,27 +359,37 @@ export default function FacultyDashboard() {
                         <td><code>{a.studentRollNo || '—'}</code></td>
                         <td>
                           <span
-                            className={`badge ${
-                              a.status === 'AUTO' ? 'badge-success' : 'badge-info'
-                            }`}
+                            className={`badge ${a.status === 'AUTO' ? 'badge-success' : 'badge-info'}`}
                           >
                             {a.status}
                           </span>
                         </td>
-                        <td><code>{a.deviceMac || '—'}</code></td>
                         <td>
-                          {a.markedAt
-                            ? new Date(a.markedAt).toLocaleTimeString()
-                            : '—'}
+                          <ConfidenceBadge level={a.confidenceLevel} score={a.confidenceScore} />
                         </td>
+                        <td>
+                          <div className="mono-stack">
+                            <code>{a.observedBssid || '—'}</code>
+                            <span className="text-muted">
+                              {a.signalDbm != null ? `${a.signalDbm} dBm` : 'no signal data'}
+                            </span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="mono-stack">
+                            <code>{a.deviceIp || '—'}</code>
+                            <code>{a.deviceMac || '—'}</code>
+                          </div>
+                        </td>
+                        <td>{a.markedAt ? new Date(a.markedAt).toLocaleTimeString() : '—'}</td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="6" className="empty-state">
+                      <td colSpan="8" className="empty-state">
                         <div className="empty-pulse">
                           <div className="pulse-ring"></div>
-                          <span>Waiting for students to connect...</span>
+                          <span>Waiting for ARP hits — or run the demo classroom.</span>
                         </div>
                       </td>
                     </tr>

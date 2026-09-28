@@ -29,15 +29,7 @@ public class StudentController {
     @GetMapping("/dashboard")
     public ResponseEntity<?> getDashboard(Authentication authentication) {
         String email = authentication.getName();
-        List<Map<String, Object>> devices = deviceService.getStudentDevices(email);
-        List<Map<String, Object>> attendance = attendanceService.getStudentAttendanceHistory(email);
-
-        Map<String, Object> dashboard = Map.of(
-                "devices", devices,
-                "attendanceHistory", attendance,
-                "totalClasses", attendance.size()
-        );
-
+        Map<String, Object> dashboard = attendanceService.getStudentDashboard(email);
         return ResponseEntity.ok(ApiResponse.success("Dashboard loaded", dashboard));
     }
 
@@ -77,5 +69,20 @@ public class StudentController {
         String email = authentication.getName();
         List<Map<String, Object>> devices = deviceService.getStudentDevices(email);
         return ResponseEntity.ok(ApiResponse.success("Devices", devices));
+    }
+
+    /**
+     * DELETE /api/student/devices/{deviceId}
+     * Remove a device owned by this student.
+     */
+    @DeleteMapping("/devices/{deviceId}")
+    public ResponseEntity<?> removeDevice(@PathVariable Long deviceId,
+                                          Authentication authentication) {
+        try {
+            deviceService.removeStudentDevice(deviceId, authentication.getName());
+            return ResponseEntity.ok(ApiResponse.success("Device removed successfully"));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
     }
 }

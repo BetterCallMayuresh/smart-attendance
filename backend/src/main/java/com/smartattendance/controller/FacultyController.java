@@ -1,6 +1,7 @@
 package com.smartattendance.controller;
 
 import com.smartattendance.dto.*;
+import com.smartattendance.model.AttendanceRecord;
 import com.smartattendance.model.Session;
 import com.smartattendance.service.AttendanceService;
 import com.smartattendance.service.SessionService;
@@ -10,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -23,6 +25,21 @@ public class FacultyController {
 
     @Autowired
     private AttendanceService attendanceService;
+
+    @Autowired
+    private com.smartattendance.service.PresenceGateway presenceGateway;
+
+    @Autowired
+    private com.smartattendance.service.ClassroomService classroomService;
+
+    /**
+     * GET /api/faculty/classrooms
+     * Rooms a session can be bound to, with their access point BSSIDs.
+     */
+    @GetMapping("/classrooms")
+    public ResponseEntity<?> classrooms() {
+        return ResponseEntity.ok(ApiResponse.success("Classrooms", classroomService.listClassrooms()));
+    }
 
     /**
      * POST /api/faculty/session/start
@@ -106,9 +123,49 @@ public class FacultyController {
     }
 
     /**
+     * POST /api/faculty/session/{sessionId}/mark-by-prn
+     * Manually mark a student present by PRN.
+     */
+    @PostMapping("/session/{sessionId}/mark-by-prn")
+    public ResponseEntity<?> manualMarkByPRN(@PathVariable Long sessionId,
+                                             @RequestBody Map<String, String> body,
+                                             Authentication authentication) {
+        try {
+            String prn = body.get("prn");
+            AttendanceRecord record = attendanceService.manualMarkByPRN(
+                    sessionId, prn, authentication.getName());
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("studentName", record.getStudent().getName());
+            result.put("status", record.getStatus());
+            return ResponseEntity.ok(ApiResponse.success("Attendance marked", result));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    /**
      * GET /api/faculty/sessions
      * Get session history for the faculty.
      */
+    @GetMapping("/presence/live")
+    public ResponseEntity<?> livePresence() {
+        return ResponseEntity.ok(ApiResponse.success("Live presence", presenceGateway.currentDevices()));
+    }
+
+    @PostMapping("/presence/simulate")
+    public ResponseEntity<?> simulateClassroom(@RequestBody(required = false) Map<String, Integer> body) {
+        try {
+            int count = body != null && body.get("count") != null ? body.get("count") : 10;
+            int intervalMs = body != null && body.get("intervalMs") != null ? body.get("intervalMs") : 1500;
+            int outsideCount = body != null && body.get("outsideCount") != null ? body.get("outsideCount") : 2;
+            return ResponseEntity.ok(ApiResponse.success(
+                    "Demo classroom started",
+                    presenceGateway.simulate(count, intervalMs, outsideCount)));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
     @GetMapping("/sessions")
     public ResponseEntity<?> getSessionHistory(Authentication authentication) {
         String email = authentication.getName();

@@ -1,0 +1,2087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmartAttend — Final Project Analysis</title>
+<style>
+@page { size: A4; margin: 16mm 14mm; }
+
+:root {
+  --ink: #16181d;
+  --muted: #5b6472;
+  --rule: #d8dee8;
+  --accent: #2d4bd8;
+  --code-bg: #f5f7fa;
+  --th-bg: #eef2f9;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.6;
+  color: var(--ink);
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 28px 30px 60px;
+  background: #fff;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+h1, h2, h3, h4 { line-height: 1.25; font-weight: 650; }
+
+h1 {
+  font-size: 23pt;
+  margin: 0 0 6px;
+  letter-spacing: -0.4px;
+}
+
+h2 {
+  font-size: 15pt;
+  margin: 30px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--rule);
+  page-break-after: avoid;
+  break-after: avoid;
+}
+
+h3 {
+  font-size: 12pt;
+  margin: 20px 0 6px;
+  color: #23262d;
+  page-break-after: avoid;
+  break-after: avoid;
+}
+
+p, ul, ol { margin: 0 0 10px; }
+li { margin-bottom: 4px; }
+
+a { color: var(--accent); text-decoration: none; }
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 26px 0;
+}
+
+code, kbd {
+  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 9pt;
+  background: var(--code-bg);
+  border: 1px solid #e3e8ef;
+  border-radius: 3px;
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid #e3e8ef;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 11px 13px;
+  overflow-x: auto;
+  page-break-inside: avoid;
+  break-inside: avoid;
+  margin: 0 0 14px;
+}
+
+pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 8.4pt;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 16px;
+  font-size: 9.4pt;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+th, td {
+  border: 1px solid var(--rule);
+  padding: 6px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th { background: var(--th-bg); font-weight: 650; }
+tbody tr:nth-child(even) { background: #fafbfd; }
+td code, th code { white-space: normal; word-break: break-word; }
+
+blockquote {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  background: #f7f9fc;
+  border-left: 3px solid var(--accent);
+  color: #2c3340;
+}
+
+blockquote p { margin: 0; }
+
+.doc-header {
+  border-bottom: 3px solid var(--ink);
+  padding-bottom: 14px;
+  margin-bottom: 8px;
+}
+
+.doc-sub {
+  color: var(--muted);
+  font-size: 10pt;
+  margin: 0;
+}
+
+/* The table of contents reads better as two columns in print. */
+.toc-block ul { columns: 2; column-gap: 34px; }
+
+@media print {
+  body { padding: 0; max-width: none; }
+  a { color: var(--ink); }
+}
+</style>
+</head>
+<body>
+<div class="doc-header">
+  <h1>SmartAttend — Final Project Analysis</h1>
+  <p class="doc-sub">Network-Based Attendance System &middot; Complete technical analysis</p>
+</div>
+<p>A deep, internals-level walkthrough of the system. This document assumes no prior
+knowledge of the codebase. Read it top to bottom and you will understand what every
+service does, how a single Wi-Fi association turns into a database row, why each design
+decision was made, and where the system's real limits are.</p>
+<p>Companion documents: <a href="../README.md"><code>README.md</code></a> for a quick overview and setup,
+<a href="./api-contract.md"><code>docs/api-contract.md</code></a> for request/response payload examples.</p>
+</div><hr />
+<h2>Table of contents</h2><div class="toc-block">
+<ol>
+<li><a href="#1-the-problem-and-the-core-idea">The problem and the core idea</a></li>
+<li><a href="#2-system-architecture">System architecture</a></li>
+<li><a href="#3-the-presence-detection-pipeline">The presence detection pipeline</a></li>
+<li><a href="#4-layer-2-networking-what-arp-actually-gives-us">Layer 2 networking: what ARP actually gives us</a></li>
+<li><a href="#5-proximity-proof-bssid-and-signal-strength">Proximity proof: BSSID and signal strength</a></li>
+<li><a href="#6-the-confidence-scoring-algorithm">The confidence scoring algorithm</a></li>
+<li><a href="#7-the-confidence-gate-refusing-to-mark">The confidence gate: refusing to mark</a></li>
+<li><a href="#8-database-schema">Database schema</a></li>
+<li><a href="#9-backend-structure-class-by-class">Backend structure, class by class</a></li>
+<li><a href="#10-the-two-websocket-channels">The two WebSocket channels</a></li>
+<li><a href="#11-complete-api-reference">Complete API reference</a></li>
+<li><a href="#12-frontend-architecture">Frontend architecture</a></li>
+<li><a href="#13-security-model">Security model</a></li>
+<li><a href="#14-configuration-profiles-and-environments">Configuration, profiles and environments</a></li>
+<li><a href="#15-running-the-system">Running the system</a></li>
+<li><a href="#16-testing">Testing</a></li>
+<li><a href="#17-the-demo-script">The demo script</a></li>
+<li><a href="#18-design-decisions-and-tradeoffs">Design decisions and tradeoffs</a></li>
+<li><a href="#19-known-limitations-and-threat-model">Known limitations and threat model</a></li>
+<li><a href="#20-file-by-file-map">File-by-file map</a></li>
+<li><a href="#21-networking-glossary">Networking glossary</a></li>
+</ol>
+<hr />
+<h2>1. The problem and the core idea</h2>
+<p>Roll-call attendance wastes lecture time and is trivially defeated by proxy answers.
+Biometric and RFID systems solve that but need dedicated hardware in every room.</p>
+<p>SmartAttend's premise: <strong>the students are already carrying a uniquely identifiable
+network device, and the campus network already knows it is there.</strong> When a phone
+associates with the classroom Wi-Fi, its network interface card announces a globally
+unique MAC address on the local network segment. If we can map that MAC to a student and
+prove the device is physically in the room, we have attendance with zero extra hardware.</p>
+<p>The project therefore has two halves, and it is important to understand that the second
+half is what makes it a <em>networking</em> project rather than a CRUD app:</p>
+<table>
+<thead>
+<tr>
+<th>Half</th>
+<th>Question it answers</th>
+<th>Mechanism</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Identity</td>
+<td><em>Whose device is this?</em></td>
+<td>MAC address to student mapping, admin-approved</td>
+</tr>
+<tr>
+<td>Proximity</td>
+<td><em>Is it actually in this room?</em></td>
+<td>Access point BSSID match plus signal strength</td>
+</tr>
+</tbody>
+</table>
+<p>Identity alone is not attendance. A student sitting in the canteen on campus Wi-Fi is
+identified perfectly and is not in the lecture. Solving only the first half produces a
+system that marks the whole campus present, which is why the proximity half exists and
+why the backend is willing to refuse a mark.</p>
+<hr />
+<h2>2. System architecture</h2>
+<p>Three independent processes, each with a single clear responsibility:</p>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code>┌──────────────────────────┐
+│  Student device (phone)  │  Associates with classroom Wi-Fi.
+│                          │  NIC appears in the network's ARP table.
+└────────────┬─────────────┘
+             │ Layer 2 / Layer 3 traffic
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│  presence-service  (Node.js)                             │
+│  REST :3001   WebSocket :3002                            │
+│                                                          │
+│  • Polls the ARP table every 10 s (`arp -a`)             │
+│  • Reads wireless context (BSSID / SSID / RSSI)         │
+│  • Diffs scans to find connects and disconnects         │
+│  • Pushes presence events over a raw WebSocket          │
+│  • Hosts the demo classroom simulator                   │
+└────────────┬─────────────────────────────────────────────┘
+             │ ws://localhost:3002   (raw JSON frames)
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│  backend  (Spring Boot 3.3.2, Java 17)      :8080        │
+│                                                          │
+│  • Maps MAC to an approved student device               │
+│  • Finds the relevant active session                    │
+│  • Scores confidence against the room's access point    │
+│  • Persists attendance, or refuses and reports why      │
+│  • Serves the REST API and JWT authentication           │
+│  • Relays live updates to browsers over STOMP           │
+└────────────┬─────────────────────────────────────────────┘
+             │ STOMP over SockJS at /ws
+             │ topic: /topic/session/{sessionId}
+             ▼
+┌──────────────────────────────────────────────────────────┐
+│  frontend  (React 19 + Vite)                :5173        │
+│                                                          │
+│  • Faculty presence command center with live radar      │
+│  • Student dashboard, heatmap, device registration      │
+│  • Admin device approval and classroom/AP registry      │
+│  • Analytics with charts, CSV and PDF export            │
+└──────────────────────────────────────────────────────────┘
+
+                    MySQL 8  :3306   (or H2 in-memory for demos)
+</code></pre></div>
+
+<h3>Why three processes instead of one</h3>
+<p>The ARP table is an operating-system resource. Reading it requires shelling out to
+platform-specific commands (<code>arp -a</code>, <code>iw</code>, <code>wdutil</code>, <code>netsh</code>) and parsing text output
+that differs per OS. Isolating that in a small Node service means:</p>
+<ul>
+<li>The scanner can run on a different machine from the backend — specifically, on a host
+  inside the classroom or on the access point itself, which is exactly where you need to
+  be to observe per-client signal strength.</li>
+<li>The Spring backend stays portable and testable, with no shell dependencies.</li>
+<li>The scanner can be replaced (by an SNMP poller against a real controller, or a RADIUS
+  accounting listener) without touching business logic.</li>
+</ul>
+<h3>Ports at a glance</h3>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th>Service</th>
+<th>Protocol</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>3001</td>
+<td>presence-service</td>
+<td>HTTP</td>
+<td>Status and simulator control</td>
+</tr>
+<tr>
+<td>3002</td>
+<td>presence-service</td>
+<td>WebSocket</td>
+<td>Event stream to the backend</td>
+</tr>
+<tr>
+<td>8080</td>
+<td>backend</td>
+<td>HTTP + WebSocket</td>
+<td>REST API, STOMP endpoint, Swagger UI</td>
+</tr>
+<tr>
+<td>3306</td>
+<td>MySQL</td>
+<td>TCP</td>
+<td>Persistence</td>
+</tr>
+<tr>
+<td>5173</td>
+<td>frontend</td>
+<td>HTTP</td>
+<td>Vite dev server (port 80 inside Docker)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>3. The presence detection pipeline</h2>
+<p>This is the heart of the system. Follow one device from association to database row.</p>
+<h3>Step 1 — Scan cycle (<code>presence-service/src/index.js</code>, <code>runScanCycle</code>)</h3>
+<p>Every <code>SCAN_INTERVAL_MS</code> (default 10 000 ms) three things happen in parallel:</p>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code><span style="color: #007020; font-weight: bold">const</span><span style="color: #BBB"> </span>[devices,<span style="color: #BBB"> </span>localWireless,<span style="color: #BBB"> </span>stationSignals]<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span><span style="color: #007020; font-weight: bold">await</span><span style="color: #BBB"> </span><span style="color: #007020">Promise</span>.all([
+<span style="color: #BBB">  </span>scanNetwork(),<span style="color: #BBB">        </span><span style="color: #60A0B0; font-style: italic">// parse `arp -a`</span>
+<span style="color: #BBB">  </span>getLocalWireless(),<span style="color: #BBB">   </span><span style="color: #60A0B0; font-style: italic">// which AP am I on?</span>
+<span style="color: #BBB">  </span>getStationSignals(),<span style="color: #BBB">  </span><span style="color: #60A0B0; font-style: italic">// per-client RSSI, if I am the AP</span>
+]);
+</code></pre></div>
+
+<p>Each ARP entry is then enriched with wireless context:</p>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code><span style="color: #007020; font-weight: bold">const</span><span style="color: #BBB"> </span>enriched<span style="color: #BBB"> </span><span style="color: #666">=</span><span style="color: #BBB"> </span>devices.map((d)<span style="color: #BBB"> </span>=&gt;<span style="color: #BBB"> </span>({
+<span style="color: #BBB">  </span>...d,
+<span style="color: #BBB">  </span>bssid<span style="color: #666">:</span><span style="color: #BBB"> </span>localWireless.bssid<span style="color: #BBB"> </span><span style="color: #666">||</span><span style="color: #BBB"> </span><span style="color: #007020; font-weight: bold">null</span>,
+<span style="color: #BBB">  </span>rssi<span style="color: #666">:</span><span style="color: #BBB"> </span>stationSignals.has(d.mac)<span style="color: #BBB"> </span><span style="color: #666">?</span><span style="color: #BBB"> </span>stationSignals.get(d.mac)<span style="color: #BBB"> </span><span style="color: #666">:</span><span style="color: #BBB"> </span><span style="color: #007020; font-weight: bold">null</span>,
+}));
+</code></pre></div>
+
+<p>Note the honesty in that second line: <code>rssi</code> is only attached when genuine per-station
+data exists. The scanner never substitutes its own signal strength for a student's,
+because that would be a fabricated measurement.</p>
+<h3>Step 2 — Diffing</h3>
+<p>The service keeps <code>previousDevices</code> and <code>currentDevices</code>. New MACs produce
+<code>presence_event</code> messages with <code>status: "connected"</code>. MACs that vanished produce
+<code>status: "disconnected"</code>. Every sixth cycle (so roughly once a minute) a full <code>snapshot</code>
+is broadcast as a safety net against missed events.</p>
+<p>Disconnect events are deliberately <strong>not</strong> used to un-mark attendance. A phone that
+sleeps its Wi-Fi radio would otherwise erase a legitimate mark.</p>
+<h3>Step 3 — Transport</h3>
+<p>Events go out as JSON over the raw WebSocket on 3002:</p>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code>{
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"type"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"presence_event"</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"mac"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"AA:BB:CC:11:22:01"</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"ip"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"192.168.1.101"</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"bssid"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"A4:83:E7:C0:FF:EE"</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"rssi"</span>:<span style="color: #BBB"> </span><span style="color: #40A070">-47</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"status"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"connected"</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"timestamp"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"2026-09-17T18:03:12.105Z"</span>
+}
+</code></pre></div>
+
+<h3>Step 4 — Ingestion (<code>PresenceIngestionService</code>)</h3>
+<p>A <code>Java-WebSocket</code> client connects on startup (<code>@PostConstruct</code>) and reconnects every
+5 seconds on failure, so service start order does not matter. It parses the frame and
+calls the attendance service. <code>textOrNull</code> and <code>intOrNull</code> helpers convert missing or
+blank JSON fields to Java <code>null</code> rather than the string <code>"null"</code> or <code>0</code>, which matters
+because a missing RSSI must be distinguishable from a reading of zero.</p>
+<h3>Step 5 — Attendance decision (<code>AttendanceService.processPresenceEvent</code>)</h3>
+<p>The full decision sequence:</p>
+<ol>
+<li><strong>Record the sighting.</strong> <code>PresenceSightingStore</code> keeps the last <code>(mac, ip, seenAt)</code>
+   in a <code>ConcurrentHashMap</code>. Comparing the previous sighting to the current one yields
+   <code>ipChangedRecently</code>: the same MAC on a different IP within 120 seconds, which hints at
+   address cloning.</li>
+<li><strong>Resolve identity.</strong> <code>deviceService.findStudentByApprovedMac(mac)</code> looks for a device
+   row that is both registered and <code>approved = true</code>. Unknown or unapproved MACs are
+   dropped silently — a visitor's laptop must never create attendance.</li>
+<li><strong>Pick candidate sessions.</strong> All active sessions, sorted by <code>startTime</code> descending, so
+   the most recently started lecture wins.</li>
+<li><strong>Skip duplicates.</strong> <code>existsBySessionAndStudent</code> prevents a second row for the same
+   student in the same session.</li>
+<li><strong>Cross-session guard.</strong> If the student was marked in a <em>different</em> session within the
+   last 10 minutes, skip. This stops a single device from being counted in two
+   simultaneous lectures.</li>
+<li><strong>Score confidence</strong> against the session's classroom (section 6).</li>
+<li><strong>Gate.</strong> Below <code>app.presence.min-confidence</code>, refuse and broadcast why. Otherwise
+   persist an <code>AUTO</code> record and broadcast the mark (section 7).</li>
+<li><strong>Break.</strong> Either outcome stops the loop, so one sighting affects at most one session.</li>
+</ol>
+<h3>Step 6 — Live push to the browser</h3>
+<p>The backend publishes to <code>/topic/session/{sessionId}</code> over STOMP. The faculty dashboard
+is subscribed and updates the radar and tables with no polling.</p>
+<hr />
+<h2>4. Layer 2 networking: what ARP actually gives us</h2>
+<p>Understanding this section is essential to discussing the project honestly.</p>
+<p><strong>ARP (Address Resolution Protocol, RFC 826)</strong> resolves a Layer 3 IPv4 address to a
+Layer 2 MAC address inside a single broadcast domain. When host A wants to send to
+<code>192.168.1.101</code> on its own subnet, it broadcasts an ARP request ("who has
+192.168.1.101?"); the owner replies with a unicast ARP reply carrying its MAC. The
+result is cached in the ARP table.</p>
+<p><code>arp -a</code> prints that <strong>cache</strong>, which produces three consequences the code lives with:</p>
+<ol>
+<li><strong>It is passive and incomplete.</strong> The cache only holds entries for hosts this machine
+   has recently exchanged frames with. A classroom of 60 phones that never talk to the
+   scanner host will largely not appear. Populating the table properly needs active
+   discovery — an ARP sweep or ping sweep across the subnet — which this build does not
+   yet do.</li>
+<li><strong>Entries age out.</strong> Timeouts vary by OS, from roughly 60 seconds to 20 minutes.
+   "Currently present" is therefore a fuzzy notion, which is precisely why
+   <code>PresenceConfidence</code> scores recency (<code>SCAN_WINDOW_SECONDS = 30</code>) instead of trusting
+   the table blindly.</li>
+<li><strong>It is limited to one broadcast domain.</strong> The scanner only sees devices on its own
+   subnet. Devices behind a router are invisible. For a campus this means one scanner per
+   VLAN, which is an argument for the scanner living on the access point.</li>
+</ol>
+<h3>Why MAC and not IP</h3>
+<p>IP addresses are leased by DHCP and rotate. A MAC address is burned into the NIC and is
+stable for the device, which makes it the correct identity key. IP is still recorded
+because it is useful evidence: the campus-subnet check and the clone-detection heuristic
+both rely on it.</p>
+<h3>Parsing</h3>
+<p><code>scanner.js</code> handles two output formats. On Linux and macOS the line looks like
+<code>? (192.168.1.1) at aa:bb:cc:dd:ee:ff [ether] on en0</code>; on Windows it is a three-column
+table with hyphen-separated MACs. Both parsers normalise to uppercase colon form and
+discard the broadcast MAC <code>FF:FF:FF:FF:FF:FF</code> and <code>.255</code> broadcast addresses.</p>
+<hr />
+<h2>5. Proximity proof: BSSID and signal strength</h2>
+<p>Two new pieces of evidence separate "on the campus LAN" from "in this room".</p>
+<p><strong>BSSID</strong> is the MAC address of the specific access point radio a client is associated
+with. Because APs are physically installed in rooms, the BSSID is effectively a room
+identifier. Registering a classroom's BSSID turns it into an attendance geofence.</p>
+<p><strong>RSSI</strong> (Received Signal Strength Indicator) is measured in dBm and is always negative.
+Roughly: −30 dBm is touching the AP, −50 is the same room, −70 is one wall away, −85 is
+barely usable. A configurable per-room cutoff (default −70 dBm) distinguishes people in
+the room from people in the corridor on the same AP.</p>
+<h3>Three detection modes, in descending fidelity</h3>
+<p><code>presence-service/src/wireless.js</code> tries each and degrades gracefully:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Command</th>
+<th>What you get</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AP mode</td>
+<td><code>iw dev &lt;iface&gt; station dump</code></td>
+<td>True per-client MAC and RSSI. The real thing.</td>
+</tr>
+<tr>
+<td>Observer mode</td>
+<td><code>iw dev &lt;iface&gt; link</code> (Linux), <code>wdutil info</code> or <code>airport -I</code> (macOS), <code>netsh wlan show interfaces</code> (Windows)</td>
+<td>The AP the scanner itself is on, used as the room's AP. No per-client RSSI.</td>
+</tr>
+<tr>
+<td>Declared mode</td>
+<td><code>CLASSROOM_BSSID</code> environment variable</td>
+<td>Operator states the room's AP manually.</td>
+</tr>
+</tbody>
+</table>
+<p>If all three fail, <code>getLocalWireless()</code> returns <code>{ bssid: null, source: 'unavailable' }</code>
+and scoring falls back to network-only evidence with an explicit
+"room presence unverified" reason. Nothing crashes and nothing is fabricated.</p>
+<p>Two platform notes worth knowing: modern macOS redacts the BSSID from <code>wdutil info</code>
+unless it runs with sudo, and <code>airport</code> was removed in macOS 14.4, so a Mac scanner will
+usually report <code>unavailable</code>. Windows reports signal as a quality percentage, which the
+code maps to approximate dBm with <code>percent / 2 - 100</code>.</p>
+<hr />
+<h2>6. The confidence scoring algorithm</h2>
+<p><code>PresenceConfidence</code> (in <code>backend/.../presence/</code>) is a deliberately <strong>pure function</strong> —
+no Spring annotations, no database, no clock of its own. Everything it needs arrives in a
+<code>Signals</code> record and the result is a <code>Result(score, level, reasons)</code>. That design is why
+it can be unit-tested exhaustively without booting an application context.</p>
+<h3>Inputs</h3>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code><span style="color: #007020; font-weight: bold">public</span><span style="color: #BBB"> </span><span style="color: #007020; font-weight: bold">record</span> <span style="color: #0E84B5; font-weight: bold">Signals</span>(
+<span style="color: #BBB">        </span><span style="color: #902000">boolean</span><span style="color: #BBB"> </span>macApproved,<span style="color: #BBB">        </span><span style="color: #60A0B0; font-style: italic">// device is registered and approved</span>
+<span style="color: #BBB">        </span>String<span style="color: #BBB"> </span>ip,<span style="color: #BBB">                  </span><span style="color: #60A0B0; font-style: italic">// IPv4 from the ARP table</span>
+<span style="color: #BBB">        </span>List<span style="color: #666">&lt;</span>String<span style="color: #666">&gt;</span><span style="color: #BBB"> </span>campusCidrs,<span style="color: #BBB">   </span><span style="color: #60A0B0; font-style: italic">// configured campus subnets</span>
+<span style="color: #BBB">        </span>Instant<span style="color: #BBB"> </span>lastSeen,<span style="color: #BBB">           </span><span style="color: #60A0B0; font-style: italic">// when this MAC was last observed</span>
+<span style="color: #BBB">        </span>Instant<span style="color: #BBB"> </span>now,<span style="color: #BBB">                </span><span style="color: #60A0B0; font-style: italic">// evaluation time</span>
+<span style="color: #BBB">        </span><span style="color: #902000">boolean</span><span style="color: #BBB"> </span>ipChangedRecently,<span style="color: #BBB">  </span><span style="color: #60A0B0; font-style: italic">// same MAC, different IP, within 120 s</span>
+<span style="color: #BBB">        </span><span style="color: #902000">boolean</span><span style="color: #BBB"> </span>duplicateMacObserved,
+<span style="color: #BBB">        </span>String<span style="color: #BBB"> </span>observedBssid,<span style="color: #BBB">       </span><span style="color: #60A0B0; font-style: italic">// AP the device is on</span>
+<span style="color: #BBB">        </span>String<span style="color: #BBB"> </span>expectedBssid,<span style="color: #BBB">       </span><span style="color: #60A0B0; font-style: italic">// AP registered for this classroom</span>
+<span style="color: #BBB">        </span>Integer<span style="color: #BBB"> </span>rssiDbm,<span style="color: #BBB">            </span><span style="color: #60A0B0; font-style: italic">// signal strength, may be null</span>
+<span style="color: #BBB">        </span><span style="color: #902000">int</span><span style="color: #BBB"> </span>minRssiDbm)<span style="color: #BBB">             </span><span style="color: #60A0B0; font-style: italic">// this room's cutoff</span>
+</code></pre></div>
+
+<h3>Two modes</h3>
+<p>The algorithm branches on whether the session is bound to a classroom
+(<code>expectedBssid</code> present). This is the single most important design point in the scoring:
+<strong>when the room is known, network evidence alone is mathematically incapable of reaching
+HIGH confidence.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Signal</th>
+<th>Room-bound weight</th>
+<th>Unbound weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MAC registered and approved</td>
+<td>+30</td>
+<td>+40</td>
+</tr>
+<tr>
+<td>Seen within the 30 s scan window</td>
+<td>+15</td>
+<td>+20</td>
+</tr>
+<tr>
+<td>IP inside a campus subnet</td>
+<td>+15</td>
+<td>+20</td>
+</tr>
+<tr>
+<td>Associated with the classroom AP</td>
+<td><strong>+30</strong></td>
+<td>not evaluated</td>
+</tr>
+<tr>
+<td>Signal at or above the room cutoff</td>
+<td><strong>+10</strong></td>
+<td>not evaluated</td>
+</tr>
+<tr>
+<td>Associated with a <em>different</em> AP</td>
+<td><strong>−35</strong></td>
+<td>not evaluated</td>
+</tr>
+<tr>
+<td>Signal below the room cutoff</td>
+<td><strong>−15</strong></td>
+<td>not evaluated</td>
+</tr>
+<tr>
+<td>Source IP changed recently</td>
+<td>−20</td>
+<td>−20</td>
+</tr>
+<tr>
+<td>Duplicate MAC observed</td>
+<td>−25</td>
+<td>−25</td>
+</tr>
+</tbody>
+</table>
+<p>The score is clamped to 0–100 and converted to a level:</p>
+<table>
+<thead>
+<tr>
+<th>Score</th>
+<th>Level</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>75–100</td>
+<td>HIGH</td>
+</tr>
+<tr>
+<td>50–74</td>
+<td>MEDIUM</td>
+</tr>
+<tr>
+<td>0–49</td>
+<td>LOW</td>
+</tr>
+</tbody>
+</table>
+<h3>Worked examples</h3>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Arithmetic</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>In the room, strong signal</td>
+<td>30 + 15 + 15 + 30 + 10</td>
+<td><strong>100, HIGH</strong> — marked</td>
+</tr>
+<tr>
+<td>Room-bound, no AP data available</td>
+<td>30 + 15 + 15</td>
+<td><strong>60, MEDIUM</strong> — marked, but not claimed as room-verified</td>
+</tr>
+<tr>
+<td>On campus, wrong AP (the corridor case)</td>
+<td>30 + 15 + 15 − 35</td>
+<td><strong>25, LOW</strong> — refused</td>
+</tr>
+<tr>
+<td>Correct AP but very weak signal</td>
+<td>30 + 15 + 15 + 30 − 15</td>
+<td><strong>75, HIGH</strong> — marked, near the boundary</td>
+</tr>
+<tr>
+<td>Unbound session, everything good</td>
+<td>40 + 20 + 20</td>
+<td><strong>80, HIGH</strong> — legacy behaviour preserved</td>
+</tr>
+</tbody>
+</table>
+<p>The unbound row matters for backward compatibility: sessions created without a room
+behave exactly as they did before proximity existed, so nothing regresses.</p>
+<h3>Reasons</h3>
+<p>Every branch appends a human-readable string. They are joined with <code>;</code> into
+<code>attendance_records.confidence_reasons</code> and sent to the UI as an array. This is what lets
+the faculty screen answer "why was this student not marked?" without anyone reading logs:</p>
+<blockquote>
+<p><code>MAC is registered and approved; Seen in current ARP scan window; IP is inside campus subnet; Associated with a different access point (A4:83:E7:11:22:33) — not this classroom</code></p>
+</blockquote>
+<h3>Supporting helpers</h3>
+<ul>
+<li><code>normalizeBssid</code> uppercases and converts hyphens to colons, so <code>a4-83-e7-c0-ff-ee</code> and
+  <code>A4:83:E7:C0:FF:EE</code> compare equal.</li>
+<li><code>ipInCidr</code> / <code>ipv4ToLong</code> implement subnet matching by converting the address to a
+  32-bit integer and comparing under a prefix mask. Malformed input returns <code>false</code>
+  rather than throwing, so a garbled ARP line cannot break the pipeline.</li>
+<li><code>manualMark()</code> returns a fixed <code>55, MEDIUM, "Marked by faculty (no live ARP proof)"</code>.
+  Faculty overrides are trusted but explicitly flagged as lacking network evidence.</li>
+</ul>
+<hr />
+<h2>7. The confidence gate: refusing to mark</h2>
+<p>When the score falls below <code>app.presence.min-confidence</code> (default 50), the backend
+creates <strong>no database row at all</strong>. Instead:</p>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code><span style="color: #007020; font-weight: bold">if</span><span style="color: #BBB"> </span>(confidence.<span style="color: #4070A0">score</span>()<span style="color: #BBB"> </span><span style="color: #666">&lt;</span><span style="color: #BBB"> </span>minConfidence)<span style="color: #BBB"> </span>{
+<span style="color: #BBB">    </span>broadcastRejection(session.<span style="color: #4070A0">getId</span>(),<span style="color: #BBB"> </span>student,<span style="color: #BBB"> </span>mac,<span style="color: #BBB"> </span>ip,<span style="color: #BBB"> </span>bssid,<span style="color: #BBB"> </span>rssi,<span style="color: #BBB"> </span>confidence);
+<span style="color: #BBB">    </span><span style="color: #007020; font-weight: bold">break</span>;
+}
+</code></pre></div>
+
+<p>A <code>presence_rejected</code> message goes to the session topic carrying the student, MAC, AP,
+signal and the full reason list. The faculty UI renders these in a red
+"Seen on the network, not marked" table and as hollow red rings on the radar.</p>
+<p>This is an intentional stance rather than a convenience. Recording a low-confidence row
+would leave a defensible-looking attendance entry backed by weak evidence, and someone
+downstream would inevitably treat it as fact. Refusing to record, while telling the
+operator exactly what was seen and why it was rejected, keeps the attendance table
+trustworthy and puts the human in the loop for edge cases. The faculty member can still
+mark the student manually, and that record is honestly labelled <code>MANUAL</code> at MEDIUM
+confidence.</p>
+<hr />
+<h2>8. Database schema</h2>
+<p>Five tables. Hibernate generates them from the entities with <code>ddl-auto=update</code> on MySQL,
+so adding a column never drops data.</p>
+<h3><code>users</code></h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>BIGINT PK</td>
+<td>auto-increment</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>VARCHAR</td>
+<td>not null</td>
+</tr>
+<tr>
+<td><code>email</code></td>
+<td>VARCHAR</td>
+<td>not null, <strong>unique</strong> — the login identity and JWT subject</td>
+</tr>
+<tr>
+<td><code>password</code></td>
+<td>VARCHAR</td>
+<td>BCrypt hash, never plaintext</td>
+</tr>
+<tr>
+<td><code>role</code></td>
+<td>VARCHAR</td>
+<td>enum as string: <code>STUDENT</code>, <code>FACULTY</code>, <code>ADMIN</code></td>
+</tr>
+<tr>
+<td><code>student_id</code></td>
+<td>VARCHAR</td>
+<td>unique, nullable — the PRN; null for staff</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DATETIME</td>
+<td>set in <code>@PrePersist</code></td>
+</tr>
+</tbody>
+</table>
+<h3><code>devices</code></h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>BIGINT PK</td>
+<td></td>
+</tr>
+<tr>
+<td><code>mac_address</code></td>
+<td>VARCHAR</td>
+<td>not null, <strong>unique globally</strong> — one MAC cannot serve two students</td>
+</tr>
+<tr>
+<td><code>device_name</code></td>
+<td>VARCHAR</td>
+<td>free text, e.g. "Demo iPhone"</td>
+</tr>
+<tr>
+<td><code>student_id</code></td>
+<td>BIGINT FK → <code>users.id</code></td>
+<td>not null, lazy</td>
+</tr>
+<tr>
+<td><code>approved</code></td>
+<td>BOOLEAN</td>
+<td>not null — only <code>true</code> participates in detection</td>
+</tr>
+<tr>
+<td><code>created_at</code>, <code>approved_at</code></td>
+<td>DATETIME</td>
+<td>audit trail</td>
+</tr>
+</tbody>
+</table>
+<p>Business rule enforced in <code>DeviceService.registerDevice</code>: a student may hold only <strong>one
+approved device at a time</strong>. Registering a second is rejected until the first is removed,
+which prevents one student blanketing the room with devices.</p>
+<h3><code>classrooms</code></h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>BIGINT PK</td>
+<td></td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>VARCHAR</td>
+<td>not null, e.g. "CNT Lab 401"</td>
+</tr>
+<tr>
+<td><code>bssid</code></td>
+<td>VARCHAR</td>
+<td>not null, <strong>unique</strong> — the AP MAC, normalised uppercase</td>
+</tr>
+<tr>
+<td><code>ssid</code></td>
+<td>VARCHAR</td>
+<td>nullable, informational</td>
+</tr>
+<tr>
+<td><code>min_rssi_dbm</code></td>
+<td>INT</td>
+<td>defaults to −70 via <code>DEFAULT_MIN_RSSI_DBM</code></td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DATETIME</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3><code>sessions</code></h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>BIGINT PK</td>
+<td></td>
+</tr>
+<tr>
+<td><code>course_name</code></td>
+<td>VARCHAR</td>
+<td>not null</td>
+</tr>
+<tr>
+<td><code>course_code</code></td>
+<td>VARCHAR</td>
+<td>nullable</td>
+</tr>
+<tr>
+<td><code>faculty_id</code></td>
+<td>BIGINT FK → <code>users.id</code></td>
+<td>not null</td>
+</tr>
+<tr>
+<td><code>classroom_id</code></td>
+<td>BIGINT FK → <code>classrooms.id</code></td>
+<td><strong>nullable</strong> — null means unbound, network-only scoring</td>
+</tr>
+<tr>
+<td><code>start_time</code></td>
+<td>DATETIME</td>
+<td>not null; <code>@PrePersist</code> only fills it when null, so seeders can backdate</td>
+</tr>
+<tr>
+<td><code>end_time</code></td>
+<td>DATETIME</td>
+<td>nullable until ended</td>
+</tr>
+<tr>
+<td><code>active</code></td>
+<td>BOOLEAN</td>
+<td>not null; one active session per faculty is enforced in the service</td>
+</tr>
+</tbody>
+</table>
+<h3><code>attendance_records</code></h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>BIGINT PK</td>
+<td></td>
+</tr>
+<tr>
+<td><code>session_id</code></td>
+<td>BIGINT FK</td>
+<td>not null</td>
+</tr>
+<tr>
+<td><code>student_id</code></td>
+<td>BIGINT FK</td>
+<td>not null</td>
+</tr>
+<tr>
+<td><code>marked_at</code></td>
+<td>DATETIME</td>
+<td>not null</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>VARCHAR</td>
+<td><code>AUTO</code>, <code>MANUAL</code>, or <code>OVERRIDE</code></td>
+</tr>
+<tr>
+<td><code>device_mac</code>, <code>device_ip</code></td>
+<td>VARCHAR</td>
+<td>evidence captured at mark time</td>
+</tr>
+<tr>
+<td><code>observed_bssid</code></td>
+<td>VARCHAR</td>
+<td>which AP saw the device</td>
+</tr>
+<tr>
+<td><code>signal_dbm</code></td>
+<td>INT</td>
+<td>nullable — null means no per-station reading</td>
+</tr>
+<tr>
+<td><code>confidence_score</code></td>
+<td>INT</td>
+<td>0–100</td>
+</tr>
+<tr>
+<td><code>confidence_level</code></td>
+<td>VARCHAR</td>
+<td>HIGH / MEDIUM / LOW</td>
+</tr>
+<tr>
+<td><code>confidence_reasons</code></td>
+<td>VARCHAR(1000)</td>
+<td><code>;</code>-joined audit trail</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Unique constraint on <code>(session_id, student_id)</code></strong> — the database itself guarantees one
+record per student per session, so even a race in the ingestion path cannot double-mark.</p>
+<h3>Relationships</h3>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code>users 1 ──── n devices
+users 1 ──── n sessions            (as faculty)
+users 1 ──── n attendance_records  (as student)
+classrooms 1 ── n sessions         (optional)
+sessions 1 ──── n attendance_records
+</code></pre></div>
+
+<p>All <code>@ManyToOne</code> associations are <code>FetchType.LAZY</code> to avoid loading the whole graph on
+every query.</p>
+<hr />
+<h2>9. Backend structure, class by class</h2>
+<p>Package root: <code>com.smartattendance</code>.</p>
+<h3><code>model/</code> — JPA entities</h3>
+<p><code>User</code>, <code>Device</code>, <code>Classroom</code>, <code>Session</code>, <code>AttendanceRecord</code>, and the <code>Role</code> enum.
+Lombok <code>@Getter @Setter @Builder</code> removes boilerplate; <code>@PrePersist</code> hooks set timestamps.</p>
+<h3><code>repository/</code> — Spring Data JPA</h3>
+<p>Interfaces only; Spring generates implementations. Beyond derived queries like
+<code>findByMacAddressAndApproved</code>, <code>AttendanceRecordRepository</code> carries three explicit JPQL
+queries for date-range and course filtering.</p>
+<h3><code>presence/</code> — the networking brain</h3>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PresenceConfidence</code></td>
+<td>Pure scoring function plus CIDR and BSSID helpers</td>
+</tr>
+<tr>
+<td><code>PresenceSightingStore</code></td>
+<td>In-memory last-seen map for recency and IP-clone detection</td>
+</tr>
+<tr>
+<td><code>MacVendor</code></td>
+<td>OUI prefix lookup returning a vendor hint such as Apple or Samsung</td>
+</tr>
+</tbody>
+</table>
+<p><code>MacVendor</code> deserves a note: the first three octets of a MAC are the Organizationally
+Unique Identifier assigned to the manufacturer. A static map of roughly two dozen
+prefixes covers Apple, Samsung, Google, Huawei, Realtek, Raspberry Pi, VMware and
+Parallels, turning a raw address into a readable vendor. This makes the approval queue far
+easier to audit and is a genuine Layer 2 detail rather than decoration. The demo prefix
+<code>AA:BB:CC</code> is mapped to "Demo Classroom Device" so simulated devices are obvious, and the
+demo BSSID <code>A4:83:E7</code> is a real Apple OUI.</p>
+<h3><code>service/</code> — business logic</h3>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AuthService</code></td>
+<td>Register and login, BCrypt hashing, JWT issuance</td>
+</tr>
+<tr>
+<td><code>DeviceService</code></td>
+<td>Registration, approval, bulk approval, MAC-to-student resolution</td>
+</tr>
+<tr>
+<td><code>ClassroomService</code></td>
+<td>Room CRUD with BSSID normalisation and duplicate rejection</td>
+</tr>
+<tr>
+<td><code>SessionService</code></td>
+<td>Start/end sessions, one-active-per-faculty rule, room binding</td>
+</tr>
+<tr>
+<td><code>AttendanceService</code></td>
+<td>The decision engine: scoring, gating, persistence, broadcasts, analytics</td>
+</tr>
+<tr>
+<td><code>PresenceIngestionService</code></td>
+<td>WebSocket <strong>client</strong> consuming the Node event stream</td>
+</tr>
+<tr>
+<td><code>PresenceGateway</code></td>
+<td>HTTP <strong>client</strong> calling the Node REST API (<code>/presence/current</code>, <code>/presence/simulate</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>AttendanceService</code> is the largest class and also computes the read models:
+<code>getStudentDashboard</code> (84-day heatmap, attendance percentage, live session banner) and
+<code>getAnalytics</code> (daily series, per-course totals, method split, average confidence, and
+students below 75 % flagged as defaulters).</p>
+<h3><code>controller/</code> — REST layer</h3>
+<p><code>AuthController</code>, <code>StudentController</code>, <code>FacultyController</code>, <code>AdminController</code>,
+<code>ReportController</code>. All return <code>ApiResponse{success, message, data}</code> except the two auth
+endpoints, which return <code>AuthResponse</code> unwrapped — a small inconsistency worth knowing
+when writing a client.</p>
+<h3><code>config/</code></h3>
+<ul>
+<li><code>SecurityConfig</code> — filter chain, role rules, BCrypt bean, stateless sessions</li>
+<li><code>WebSocketConfig</code> — STOMP broker at <code>/ws</code>, topic prefix <code>/topic</code>, app prefix <code>/app</code></li>
+<li><code>CorsConfig</code> — origins from <code>app.cors.allowed-origins</code>, credentials enabled</li>
+<li><code>DemoDataSeeder</code> — idempotent demo data (see below)</li>
+</ul>
+<h3><code>security/</code></h3>
+<ul>
+<li><code>JwtTokenProvider</code> — HMAC-SHA signing, 24-hour expiry, email as subject</li>
+<li><code>JwtAuthenticationFilter</code> — <code>OncePerRequestFilter</code> reading the <code>Bearer</code> header and
+  populating the <code>SecurityContext</code></li>
+<li><code>CustomUserDetailsService</code> — loads a user by email for Spring Security</li>
+</ul>
+<h3>The seeder</h3>
+<p><code>DemoDataSeeder</code> is a <code>CommandLineRunner</code> that is <strong>idempotent and non-destructive</strong>. It
+checks existence before every insert (<code>findByEmail</code>, <code>existsByBssid</code>,
+<code>findByMacAddress</code>), so it can run against a populated production database without
+touching a single existing row. It creates:</p>
+<ul>
+<li>One admin, one faculty, and ten students (<code>student1..10@smartattend.edu</code>), all with
+  password <code>Demo@123</code> and PRNs <code>CS2024D01</code>–<code>CS2024D10</code></li>
+<li>One approved device per student, <code>AA:BB:CC:11:22:01</code> through <code>...:0A</code></li>
+<li>Two classrooms: <strong>CNT Lab 401</strong> on <code>A4:83:E7:C0:FF:EE</code> and
+  <strong>Lecture Hall 2 (adjacent)</strong> on <code>A4:83:E7:11:22:33</code></li>
+</ul>
+<p>The MAC range and the two BSSIDs are shared with the simulator's defaults in
+<code>presence-service/src/config.js</code>. That alignment is what makes the demo work end to end;
+change one side and you must change the other.</p>
+<hr />
+<h2>10. The two WebSocket channels</h2>
+<p>A common source of confusion: there are <strong>two different WebSocket systems</strong> in this
+project and they are not the same technology.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>presence-service → backend</th>
+<th>backend → browser</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Endpoint</td>
+<td><code>ws://localhost:3002</code></td>
+<td><code>http://localhost:8080/ws</code></td>
+</tr>
+<tr>
+<td>Protocol</td>
+<td>Raw WebSocket, bare JSON frames</td>
+<td>STOMP over SockJS</td>
+</tr>
+<tr>
+<td>Server</td>
+<td><code>ws</code> npm package</td>
+<td>Spring <code>@EnableWebSocketMessageBroker</code></td>
+</tr>
+<tr>
+<td>Client</td>
+<td><code>Java-WebSocket</code> 1.5.7</td>
+<td><code>@stomp/stompjs</code> + <code>sockjs-client</code></td>
+</tr>
+<tr>
+<td>Addressing</td>
+<td>Single broadcast to all clients</td>
+<td>Subscription to <code>/topic/session/{id}</code></td>
+</tr>
+<tr>
+<td>Message types</td>
+<td><code>presence_event</code>, <code>snapshot</code></td>
+<td><code>attendance_marked</code>, <code>presence_rejected</code></td>
+</tr>
+<tr>
+<td>Authentication</td>
+<td><strong>None</strong></td>
+<td><strong>None on the endpoint</strong> (see section 13)</td>
+</tr>
+</tbody>
+</table>
+<p>STOMP is used on the browser side because it provides topic-based subscription, so the
+backend can address updates to one session rather than broadcasting everything to every
+connected dashboard. SockJS wraps it with fallbacks for environments that block raw
+WebSockets.</p>
+<h3>Message shapes</h3>
+<p><code>attendance_marked</code>:</p>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code>{
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"type"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"attendance_marked"</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"sessionId"</span>:<span style="color: #BBB"> </span><span style="color: #40A070">1</span>,<span style="color: #BBB"> </span><span style="color: #062873; font-weight: bold">"studentId"</span>:<span style="color: #BBB"> </span><span style="color: #40A070">4</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"studentName"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"Ananya Iyer"</span>,<span style="color: #BBB"> </span><span style="color: #062873; font-weight: bold">"studentRollNo"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"CS2024D04"</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"mac"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"AA:BB:CC:11:22:04"</span>,<span style="color: #BBB"> </span><span style="color: #062873; font-weight: bold">"ip"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"192.168.1.104"</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"bssid"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"A4:83:E7:C0:FF:EE"</span>,<span style="color: #BBB"> </span><span style="color: #062873; font-weight: bold">"rssi"</span>:<span style="color: #BBB"> </span><span style="color: #40A070">-42</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"status"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"AUTO"</span>,<span style="color: #BBB"> </span><span style="color: #062873; font-weight: bold">"markedAt"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"2026-09-17T23:35:02"</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"confidenceScore"</span>:<span style="color: #BBB"> </span><span style="color: #40A070">100</span>,<span style="color: #BBB"> </span><span style="color: #062873; font-weight: bold">"confidenceLevel"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"HIGH"</span>,
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"confidenceReasons"</span>:<span style="color: #BBB"> </span>[<span style="color: #4070A0">"MAC is registered and approved"</span>,<span style="color: #BBB"> </span><span style="color: #4070A0">"..."</span>],
+<span style="color: #BBB">  </span><span style="color: #062873; font-weight: bold">"vendor"</span>:<span style="color: #BBB"> </span><span style="color: #4070A0">"Demo Classroom Device"</span>
+}
+</code></pre></div>
+
+<p><code>presence_rejected</code> carries the same identity and evidence fields plus <code>seenAt</code>, and
+notably <strong>no</strong> <code>markedAt</code> or record id, because nothing was stored.</p>
+<hr />
+<h2>11. Complete API reference</h2>
+<p>Base URL <code>http://localhost:8080/api</code>. Interactive docs at
+<code>http://localhost:8080/swagger-ui.html</code> (SpringDoc OpenAPI).</p>
+<h3>Public</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>POST</td>
+<td><code>/auth/register</code></td>
+<td>Create account; returns JWT. Only STUDENT or FACULTY accepted</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/auth/login</code></td>
+<td>Exchange credentials for a JWT</td>
+</tr>
+</tbody>
+</table>
+<h3>Student — requires role <code>STUDENT</code></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/student/dashboard</code></td>
+<td>Devices, history, percentage, 84-day heatmap, live session</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/student/attendance-history</code></td>
+<td>Flat attendance list with course details</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/student/device/register</code></td>
+<td>Submit a MAC for approval</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/student/devices</code></td>
+<td>Own devices with vendor hints</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/student/devices/{deviceId}</code></td>
+<td>Remove own device (ownership checked)</td>
+</tr>
+</tbody>
+</table>
+<h3>Faculty — requires role <code>FACULTY</code></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/faculty/classrooms</code></td>
+<td>Rooms available for binding</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/faculty/session/start</code></td>
+<td>Start a session; body may include <code>classroomId</code></td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/faculty/session/{id}/end</code></td>
+<td>End a session (ownership checked)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/faculty/session/active</code></td>
+<td>Active session plus current attendees</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/faculty/session/{id}/live</code></td>
+<td>Attendance rows for a session</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/faculty/session/{sessionId}/mark/{studentId}</code></td>
+<td>Manual mark by internal id</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/faculty/session/{sessionId}/mark-by-prn</code></td>
+<td>Manual mark by PRN</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/faculty/sessions</code></td>
+<td>Session history with room info</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/faculty/presence/live</code></td>
+<td>Proxied live ARP view from the Node service</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/faculty/presence/simulate</code></td>
+<td>Start the demo classroom</td>
+</tr>
+</tbody>
+</table>
+<h3>Admin — requires role <code>ADMIN</code></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/admin/devices/pending</code></td>
+<td>Approval queue with student details</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/admin/devices/{id}/approve</code></td>
+<td>Approve one device</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/admin/devices/{id}/reject</code></td>
+<td>Delete a device</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/admin/devices/bulk-approve</code></td>
+<td>Approve many: <code>{"ids":[1,2,3]}</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/admin/users</code></td>
+<td>All users</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/admin/classrooms</code></td>
+<td>Registered rooms</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/admin/classrooms</code></td>
+<td>Register a room; BSSID validated by regex</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/admin/classrooms/{id}</code></td>
+<td>Remove a room</td>
+</tr>
+</tbody>
+</table>
+<h3>Reports — <code>FACULTY</code> or <code>ADMIN</code></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/reports/attendance?course=&amp;date=</code></td>
+<td>Filtered attendance report</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/reports/analytics</code></td>
+<td>Aggregates for the charts and defaulter list</td>
+</tr>
+</tbody>
+</table>
+<h3>presence-service REST (port 3001, unauthenticated)</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/presence/current</code></td>
+<td>Devices, wireless context, scan count</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/presence/health</code></td>
+<td>Uptime, client count, BSSID, detection source</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/presence/wireless</code></td>
+<td>Wireless context and which method found it</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/presence/simulate</code></td>
+<td><code>{count, intervalMs, outsideCount}</code></td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/presence/simulate/clear</code></td>
+<td>Drop simulated devices</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>12. Frontend architecture</h2>
+<p>React 19 with Vite 8, plain CSS (no framework), <code>oxlint</code> for linting.</p>
+<h3>Routing and guards</h3>
+<p><code>App.jsx</code> composes <code>AuthProvider</code> → <code>ToastProvider</code> → <code>Navbar</code> + <code>CommandPalette</code> +
+routes. <code>ProtectedRoute</code> takes a <code>roles</code> array and redirects unauthorised users to their
+own home route.</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Role</th>
+<th>Page</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/</code></td>
+<td>public</td>
+<td><code>Landing</code> (redirects logged-in users to their dashboard)</td>
+</tr>
+<tr>
+<td><code>/login</code>, <code>/register</code></td>
+<td>public</td>
+<td><code>Login</code>, <code>Register</code></td>
+</tr>
+<tr>
+<td><code>/student</code></td>
+<td>STUDENT</td>
+<td><code>StudentDashboard</code> — heatmap, percent ring, live banner</td>
+</tr>
+<tr>
+<td><code>/student/devices</code></td>
+<td>STUDENT</td>
+<td><code>StudentDevicesPage</code></td>
+</tr>
+<tr>
+<td><code>/faculty</code></td>
+<td>FACULTY</td>
+<td><code>FacultyDashboard</code> — the presence command center</td>
+</tr>
+<tr>
+<td><code>/faculty/sessions</code></td>
+<td>FACULTY</td>
+<td><code>FacultySessionsPage</code> — start session, pick room</td>
+</tr>
+<tr>
+<td><code>/admin</code></td>
+<td>ADMIN</td>
+<td><code>AdminDashboard</code> — device approval with bulk actions</td>
+</tr>
+<tr>
+<td><code>/admin/classrooms</code></td>
+<td>ADMIN</td>
+<td><code>AdminClassroomsPage</code> — the AP registry</td>
+</tr>
+<tr>
+<td><code>/admin/users</code></td>
+<td>ADMIN</td>
+<td><code>AdminUsersPage</code></td>
+</tr>
+<tr>
+<td><code>/reports</code></td>
+<td>FACULTY, ADMIN</td>
+<td><code>Reports</code> — charts, CSV, PDF</td>
+</tr>
+</tbody>
+</table>
+<h3>State and transport</h3>
+<ul>
+<li><code>AuthContext</code> holds the user and mirrors <code>token</code> and <code>user</code> into <code>localStorage</code> so a
+  refresh keeps the session.</li>
+<li><code>api.js</code> centralises axios. A request interceptor attaches
+  <code>Authorization: Bearer &lt;token&gt;</code>; a response interceptor catches HTTP 401, clears
+  storage, and redirects to <code>/login</code>. <code>API_BASE</code> and <code>WS_URL</code> come from
+  <code>VITE_API_URL</code> / <code>VITE_WS_URL</code> so Docker builds can point elsewhere.</li>
+<li><code>ToastContext</code> provides <code>toast.success</code> / <code>toast.error</code> for transient messages.</li>
+</ul>
+<h3><code>PresenceRadar</code> — the signature component</h3>
+<p>A canvas animation driven by <code>requestAnimationFrame</code>. The important logic is that
+geometry encodes real measurements:</p>
+<ul>
+<li><strong>Radius from RSSI.</strong> <code>radiusFromRssi</code> clamps signal to −90…−40 dBm and maps it to
+  0.12…0.92 of the radar radius, so stronger signal genuinely means closer to the AP at
+  the centre. Range rings are labelled in dBm. Devices with no RSSI reading are parked on
+  an outer ring derived from a hash, and that fallback is visually distinguishable rather
+  than pretending to be a measurement.</li>
+<li><strong>Angle from a hash</strong> of the student id, which is stable across renders but carries no
+  meaning — bearing is not measurable from a single AP.</li>
+<li><strong>Colour from state.</strong> Green for HIGH, amber for MEDIUM, grey for unregistered devices,
+  and red hollow rings for refused devices.</li>
+</ul>
+<h3>Other components</h3>
+<p><code>ConfidenceBadge</code> (HIGH/MEDIUM/LOW pill with score), <code>AttendanceHeatmap</code> (12×7 grid
+coloured by count), <code>PercentRing</code> (SVG progress ring), <code>CommandPalette</code> (⌘K navigation),
+<code>Navbar</code> (role-aware links with a mobile hamburger).</p>
+<p><code>utils/attendanceMath.js</code> holds <code>heatmapMax</code> and <code>attendancePercent</code> as pure functions so
+they can be unit-tested independently of React.</p>
+<h3>Reports</h3>
+<p><code>recharts</code> renders the daily bar chart, per-course chart, and method pie chart.
+<code>jspdf</code> with <code>jspdf-autotable</code> produces a PDF; CSV export is built by hand from the same
+rows.</p>
+<hr />
+<h2>13. Security model</h2>
+<h3>What is implemented</h3>
+<ul>
+<li><strong>Password storage.</strong> BCrypt via <code>BCryptPasswordEncoder</code> — salted and adaptive.</li>
+<li><strong>Authentication.</strong> Stateless JWT, HMAC-SHA signed, 24-hour expiry, email as subject.
+  <code>SessionCreationPolicy.STATELESS</code> means no server-side sessions.</li>
+<li><strong>Authorisation.</strong> Path-prefix role rules in <code>SecurityConfig</code>:
+  <code>/api/admin/**</code> requires ADMIN, <code>/api/faculty/**</code> requires FACULTY,
+  <code>/api/student/**</code> requires STUDENT, <code>/api/reports/**</code> allows either FACULTY or ADMIN.</li>
+<li><strong>Privilege-escalation guard.</strong> <code>AuthService.register</code> accepts only STUDENT or FACULTY.
+  A self-registered ADMIN is impossible; the role silently falls back to STUDENT.</li>
+<li><strong>Ownership checks.</strong> Ending a session, removing a device, and manual marking all
+  verify the caller owns the resource rather than trusting the id in the URL.</li>
+<li><strong>CORS.</strong> Explicit origin allowlist from configuration, not a wildcard.</li>
+<li><strong>Database integrity.</strong> Unique constraints on email, MAC, BSSID, and
+  <code>(session_id, student_id)</code> enforce invariants below the application layer.</li>
+</ul>
+<h3>Known weaknesses, stated plainly</h3>
+<p>These are real and belong in any honest write-up:</p>
+<ol>
+<li><strong>The presence feed is an unauthenticated trust boundary.</strong> The Node WebSocket server
+   on 3002 accepts any client, and the backend marks attendance based on whatever arrives.
+   Anyone who can reach that port can forge attendance for any approved MAC. The fix is
+   an HMAC signature per event with a timestamp and nonce for replay protection, or mTLS.</li>
+<li><strong>The STOMP endpoint is <code>permitAll</code>.</strong> <code>/ws/**</code> is public and
+   <code>setAllowedOriginPatterns("*")</code>, so anyone can subscribe to <code>/topic/session/{id}</code> and
+   read student names, PRNs, and MAC addresses. This is a privacy leak as much as an
+   authorisation gap.</li>
+<li><strong>BSSID is self-reported by the scanner.</strong> Proximity proof is only as trustworthy as
+   the host reporting it. A compromised scanner can claim any BSSID. This is the same
+   trust-boundary problem as point 1.</li>
+<li><strong>MAC addresses are forgeable.</strong> <code>sudo ifconfig en0 ether &lt;target&gt;</code> impersonates
+   another student's device. <code>duplicateMacObserved</code> exists in the scoring inputs but is
+   currently always passed <code>false</code>, so duplicate detection never fires. Credible defences
+   would be DHCP fingerprinting (option 55), OUI-versus-fingerprint consistency checks,
+   and a nonce challenge the real device must answer over HTTP.</li>
+<li><strong>JWT in <code>localStorage</code></strong> is readable by any injected script, so an XSS flaw becomes
+   full account takeover. <code>HttpOnly</code> cookies would be stronger.</li>
+<li><strong>No rate limiting on <code>/api/auth/login</code></strong>, so password brute-forcing is unthrottled.</li>
+<li><strong>H2 console is <code>permitAll</code> and <code>frameOptions</code> is disabled.</strong> Acceptable for local
+   development, unacceptable if the H2 profile ever ran somewhere reachable.</li>
+<li><strong>The JWT secret has a hardcoded default</strong> in <code>application.properties</code>, and
+   <code>JwtTokenProvider.getSigningKey()</code> Base64-encodes the raw secret bytes only to
+   immediately Base64-decode them — a no-op round trip that ends up using the raw bytes.
+   Harmless but confusing, and it means secret strength depends entirely on the
+   configured string.</li>
+</ol>
+<hr />
+<h2>14. Configuration, profiles and environments</h2>
+<h3>Backend properties</h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>server.port</code></td>
+<td>8080</td>
+<td>HTTP port</td>
+</tr>
+<tr>
+<td><code>spring.datasource.url</code></td>
+<td><code>${DB_URL:...}</code> MySQL localhost</td>
+<td>JDBC URL</td>
+</tr>
+<tr>
+<td><code>spring.jpa.hibernate.ddl-auto</code></td>
+<td><code>update</code></td>
+<td>Additive schema migration; <strong>never</strong> drops</td>
+</tr>
+<tr>
+<td><code>app.jwt.secret</code></td>
+<td><code>${JWT_SECRET:...}</code></td>
+<td>HMAC signing key</td>
+</tr>
+<tr>
+<td><code>app.jwt.expiration-ms</code></td>
+<td>86400000</td>
+<td>24 hours</td>
+</tr>
+<tr>
+<td><code>app.presence.ws-url</code></td>
+<td><code>${PRESENCE_WS_URL:ws://localhost:3002}</code></td>
+<td>Event stream source</td>
+</tr>
+<tr>
+<td><code>app.presence.rest-url</code></td>
+<td><code>${PRESENCE_REST_URL:http://localhost:3001}</code></td>
+<td>Simulator and live view</td>
+</tr>
+<tr>
+<td><code>app.presence.campus-subnets</code></td>
+<td><code>10.0.0.0/8,172.16.0.0/12,192.168.0.0/16</code></td>
+<td>RFC 1918 ranges treated as campus</td>
+</tr>
+<tr>
+<td><code>app.presence.min-confidence</code></td>
+<td>50</td>
+<td>The refusal threshold</td>
+</tr>
+<tr>
+<td><code>app.cors.allowed-origins</code></td>
+<td>localhost 5173 and 3000</td>
+<td>CORS allowlist</td>
+</tr>
+<tr>
+<td><code>springdoc.swagger-ui.path</code></td>
+<td><code>/swagger-ui.html</code></td>
+<td>API docs</td>
+</tr>
+</tbody>
+</table>
+<p>Every environment-sensitive value uses the <code>${VAR:default}</code> form, so the application
+starts with no environment file at all — useful for graders who just want it to run.</p>
+<h3>Profiles</h3>
+<ul>
+<li><strong>default</strong> — MySQL, <code>ddl-auto=update</code>, data persists across restarts.</li>
+<li><strong>h2</strong> (<code>--spring.profiles.active=h2</code>) — in-memory H2 in MySQL compatibility mode with
+  <code>ddl-auto=create-drop</code> and the console at <code>/h2-console</code>. <strong>Everything is wiped on every
+  restart</strong>, which makes it perfect for clean demos and wrong for real data.</li>
+</ul>
+<h3>presence-service environment</h3>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SCAN_INTERVAL_MS</code></td>
+<td>10000</td>
+<td>Poll period</td>
+</tr>
+<tr>
+<td><code>REST_PORT</code> / <code>WS_PORT</code></td>
+<td>3001 / 3002</td>
+<td>Listen ports</td>
+</tr>
+<tr>
+<td><code>CLASSROOM_BSSID</code></td>
+<td>unset</td>
+<td>Declare the room's AP when auto-detection cannot</td>
+</tr>
+<tr>
+<td><code>DEMO_ROOM_BSSID</code></td>
+<td><code>A4:83:E7:C0:FF:EE</code></td>
+<td>Simulator in-room AP; must match the seeded classroom</td>
+</tr>
+<tr>
+<td><code>DEMO_CORRIDOR_BSSID</code></td>
+<td><code>A4:83:E7:11:22:33</code></td>
+<td>Simulator out-of-room AP</td>
+</tr>
+</tbody>
+</table>
+<h3>Frontend environment</h3>
+<p><code>VITE_API_URL</code> and <code>VITE_WS_URL</code>, baked in at build time (see <code>frontend/.env.example</code>).</p>
+<h3>Docker</h3>
+<p><code>docker-compose.yml</code> defines four services with correct ordering: MySQL exposes a
+<code>mysqladmin ping</code> healthcheck, and the backend waits on <code>condition: service_healthy</code>
+before starting, so it never races the database. Service names double as DNS hostnames,
+which is why the backend's URLs become <code>ws://presence:3002</code> and
+<code>jdbc:mysql://mysql:3306/...</code>. A named volume <code>smartattend-mysql</code> persists data. The
+frontend is built with the API URLs as build arguments and served on container port 80,
+published as 5173.</p>
+<hr />
+<h2>15. Running the system</h2>
+<h3>Prerequisites</h3>
+<p>JDK 17, Node 18+, MySQL 8 (or use the H2 profile), Maven (the <code>mvnw</code> wrapper is included).</p>
+<h3>Local, three terminals</h3>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code><span style="color: #60A0B0; font-style: italic"># 1. Presence service</span>
+<span style="color: #007020">cd</span><span style="color: #BBB"> </span>presence-service<span style="color: #BBB"> </span><span style="color: #666">&amp;&amp;</span><span style="color: #BBB"> </span>npm<span style="color: #BBB"> </span>install<span style="color: #BBB"> </span><span style="color: #666">&amp;&amp;</span><span style="color: #BBB"> </span>node<span style="color: #BBB"> </span>src/index.js
+
+<span style="color: #60A0B0; font-style: italic"># 2. Backend (MySQL). Defaults are baked in, so no env file is required.</span>
+<span style="color: #007020">cd</span><span style="color: #BBB"> </span>backend<span style="color: #BBB"> </span><span style="color: #666">&amp;&amp;</span><span style="color: #BBB"> </span>./mvnw<span style="color: #BBB"> </span>spring-boot:run
+
+<span style="color: #60A0B0; font-style: italic"># 2b. Or with a throwaway in-memory database</span>
+<span style="color: #007020">cd</span><span style="color: #BBB"> </span>backend<span style="color: #BBB"> </span><span style="color: #666">&amp;&amp;</span><span style="color: #BBB"> </span>./mvnw<span style="color: #BBB"> </span>spring-boot:run<span style="color: #BBB"> </span>-Dspring-boot.run.profiles<span style="color: #666">=</span>h2
+
+<span style="color: #60A0B0; font-style: italic"># 3. Frontend</span>
+<span style="color: #007020">cd</span><span style="color: #BBB"> </span>frontend<span style="color: #BBB"> </span><span style="color: #666">&amp;&amp;</span><span style="color: #BBB"> </span>npm<span style="color: #BBB"> </span>install<span style="color: #BBB"> </span><span style="color: #666">&amp;&amp;</span><span style="color: #BBB"> </span>npm<span style="color: #BBB"> </span>run<span style="color: #BBB"> </span>dev
+</code></pre></div>
+
+<p>Then open <code>http://localhost:5173</code> and sign in as <code>faculty@smartattend.edu</code> / <code>Demo@123</code>.</p>
+<p>If you prefer to supply credentials through <code>backend/.env</code>, <strong>quote the values</strong>. The
+JDBC URL contains <code>&amp;</code>, which a shell interprets as a background operator, and an
+unquoted line produces <code>parse error near '&amp;'</code> when sourced.</p>
+<h3>Docker</h3>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code>docker<span style="color: #BBB"> </span>compose<span style="color: #BBB"> </span>up<span style="color: #BBB"> </span>--build
+</code></pre></div>
+
+<p>One caveat with real detection under Docker: a container has its own network namespace,
+so <code>arp -a</code> inside it shows the container's ARP table, not the classroom's. For genuine
+scanning, run the presence service on the host (or on the access point) and point the
+backend at it with <code>PRESENCE_WS_URL</code> and <code>PRESENCE_REST_URL</code>.</p>
+<h3>Useful URLs</h3>
+<table>
+<thead>
+<tr>
+<th>URL</th>
+<th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>http://localhost:5173</code></td>
+<td>Application</td>
+</tr>
+<tr>
+<td><code>http://localhost:8080/swagger-ui.html</code></td>
+<td>Interactive API docs</td>
+</tr>
+<tr>
+<td><code>http://localhost:8080/h2-console</code></td>
+<td>H2 console (h2 profile only)</td>
+</tr>
+<tr>
+<td><code>http://localhost:3001/presence/health</code></td>
+<td>Scanner status</td>
+</tr>
+<tr>
+<td><code>http://localhost:3001/presence/wireless</code></td>
+<td>Which AP the scanner detected, and how</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>16. Testing</h2>
+<p><code>backend/src/test/java/.../PresenceConfidenceTest.java</code> — 11 JUnit 5 tests covering the
+scoring engine:</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>deviceOnClassroomApWithStrongSignalIsHigh</code></td>
+<td>Correct AP plus strong signal reaches HIGH</td>
+</tr>
+<tr>
+<td><code>networkPresenceWithoutApProofCannotReachHigh</code></td>
+<td><strong>The key invariant</strong>: no AP data can never be HIGH on a room-bound session</td>
+</tr>
+<tr>
+<td><code>deviceOnDifferentApIsRejectedAsLow</code></td>
+<td>Wrong AP drops below the refusal threshold</td>
+</tr>
+<tr>
+<td><code>weakSignalOnCorrectApIsPenalized</code></td>
+<td>Weak signal scores strictly lower than strong</td>
+</tr>
+<tr>
+<td><code>unboundSessionStillUsesNetworkOnlyScoring</code></td>
+<td>Legacy behaviour preserved when no room is bound</td>
+</tr>
+<tr>
+<td><code>unknownMacOutsideSubnetIsLow</code></td>
+<td>Unapproved and off-subnet is LOW</td>
+</tr>
+<tr>
+<td><code>ipChangeAndDuplicateMacPenalize</code></td>
+<td>Clone heuristics reduce the score</td>
+</tr>
+<tr>
+<td><code>bssidComparisonIgnoresCaseAndSeparators</code></td>
+<td><code>a4-83-e7-…</code> equals <code>A4:83:E7:…</code></td>
+</tr>
+<tr>
+<td><code>cidrMatchWorks</code></td>
+<td>Subnet arithmetic is correct</td>
+</tr>
+<tr>
+<td><code>manualMarkIsMedium</code></td>
+<td>Faculty override is 55 / MEDIUM</td>
+</tr>
+<tr>
+<td><code>levelBoundaries</code></td>
+<td>75 → HIGH, 50 → MEDIUM, 49 → LOW</td>
+</tr>
+</tbody>
+</table>
+<div class="codehilite" style="background: #f0f0f0"><pre style="line-height: 125%;"><span></span><code><span style="color: #007020">cd</span><span style="color: #BBB"> </span>backend<span style="color: #BBB"> </span><span style="color: #666">&amp;&amp;</span><span style="color: #BBB"> </span>./mvnw<span style="color: #BBB"> </span><span style="color: #007020">test</span>
+</code></pre></div>
+
+<p>Testing the scoring engine is cheap precisely because it is a pure function — the reason
+it was written without Spring dependencies. The rest of the system is verified end to end
+by running the stack and driving the simulator.</p>
+<hr />
+<h2>17. The demo script</h2>
+<p>The most persuasive three minutes, in order:</p>
+<ol>
+<li>Sign in as faculty (<code>faculty@smartattend.edu</code> / <code>Demo@123</code>).</li>
+<li><strong>Sessions</strong> → course name → select <strong>CNT Lab 401 — A4:83:E7:C0:FF:EE</strong> → start.
+   Point out the warning text shown when a room is <em>not</em> selected.</li>
+<li>On the command center, press <strong>▶ Run demo classroom</strong>.</li>
+<li>Watch eight students appear as green blips, positioned by signal strength, each
+   <code>HIGH (100)</code>.</li>
+<li>Then show the red table: two students <strong>seen on the network but not marked</strong>, with the
+   reason <em>"Associated with a different access point — not this classroom."</em></li>
+</ol>
+<p>Step 5 is the whole argument. Those two students are approved, on the campus subnet, and
+freshly seen in the ARP table — every signal a naive system checks. They are refused
+because they are on the neighbouring AP. Say out loud that a system without proximity
+proof would have marked them present.</p>
+<p>Follow-ups worth having ready:</p>
+<ul>
+<li><strong>Admin → Rooms</strong> shows the AP registry and the per-room dBm cutoff.</li>
+<li><code>curl http://localhost:3001/presence/wireless</code> shows how the scanner learned the BSSID,
+  including the <code>unavailable</code> fallback on macOS.</li>
+<li>The backend console prints the full reason list for every decision.</li>
+</ul>
+<hr />
+<h2>18. Design decisions and tradeoffs</h2>
+<p><strong>MAC as identity, not IP.</strong> DHCP leases rotate; MAC is stable per NIC. IP is retained as
+corroborating evidence rather than identity.</p>
+<p><strong>Admin approval before detection.</strong> Any student could otherwise claim an arbitrary MAC,
+including a classmate's. Approval puts a human at the identity boundary. The one-approved
+-device rule stops device flooding.</p>
+<p><strong>Scoring as a pure function.</strong> No Spring, no database, no ambient clock — <code>now</code> is an
+input. This makes exhaustive unit testing trivial and keeps the security-critical logic
+readable in one screen.</p>
+<p><strong>Two scoring modes instead of one.</strong> Adding proximity as just another positive signal
+would have left the old maximum intact, and network-only evidence would still have
+reached HIGH. Rebalancing the weights when a room is bound is what makes AP association
+<em>necessary</em> rather than merely nice. Unbound sessions keep the old weights so nothing
+regresses.</p>
+<p><strong>Refusing rather than recording low confidence.</strong> Covered in section 7: a stored row
+acquires the appearance of fact regardless of its score.</p>
+<p><strong>Never fabricating an RSSI.</strong> When only the scanner's own signal is known, per-device
+RSSI stays <code>null</code> and the radar visibly treats it as unknown. A plausible-looking
+invented number would be worse than an honest gap.</p>
+<p><strong>Disconnects do not un-mark.</strong> Phones sleep their radios; attendance should not evaporate
+because a screen locked.</p>
+<p><strong>Most-recently-started active session wins.</strong> A pragmatic stand-in for real enrollment.
+Without a student-to-course mapping there is no principled way to choose among concurrent
+sessions, and the 10-minute cross-session guard limits the damage. A proper <code>enrollments</code>
+table is the correct fix and the most valuable remaining piece of data modelling.</p>
+<p><strong>Idempotent seeding.</strong> Checking existence before every insert means the seeder is safe
+to run against a populated database — important once real data exists.</p>
+<hr />
+<h2>19. Known limitations and threat model</h2>
+<p>An honest account of what this system cannot do. For a course report, this section is
+often worth more than another feature, because it demonstrates you understand the
+boundaries of your own design.</p>
+<h3>Detection limitations</h3>
+<ol>
+<li><strong>Passive ARP is incomplete.</strong> The cache only lists hosts the scanner has recently
+   exchanged frames with, so many classroom devices never appear. An active ARP sweep or
+   ping sweep is needed for reliable coverage.</li>
+<li><strong>ARP cache aging</strong> makes "present now" imprecise, mitigated but not solved by the
+   30-second recency window.</li>
+<li><strong>One broadcast domain per scanner.</strong> Devices behind a router are invisible; a campus
+   needs one scanner per VLAN.</li>
+<li><strong>IPv4 only.</strong> The parsers handle IPv4. Modern devices also use IPv6 with SLAAC and
+   privacy extensions (RFC 4941) that rotate addresses, where NDP replaces ARP entirely.
+   Using MAC as the identity key means this does not break the design, but the scanner
+   sees less than it could.</li>
+<li><strong>Per-client RSSI needs AP-mode access.</strong> In observer mode you get room-level AP
+   binding but no individual distances, so the radar falls back to its unknown ring.</li>
+<li><strong>macOS cannot easily report BSSID.</strong> <code>wdutil</code> redacts it without sudo and <code>airport</code>
+   was removed in 14.4, so a Mac scanner typically reports <code>unavailable</code> and detection
+   degrades to network-only scoring.</li>
+</ol>
+<h3>Security threats</h3>
+<p>See section 13 for the full list. The two most serious, ranked by how easily an
+undergraduate could exploit them:</p>
+<ul>
+<li><strong>MAC spoofing for proxy attendance.</strong> Trivial with one command, and duplicate
+  detection is currently inert.</li>
+<li><strong>Forged presence events.</strong> The unauthenticated scanner-to-backend channel accepts
+  attendance claims from anyone who can reach port 3002.</li>
+</ul>
+<h3>The real-world blocker: MAC randomisation</h3>
+<p>iOS 14+ and Android 10+ randomise their MAC address per SSID <strong>by default</strong>. A randomised
+address is stable for a given network, so registration still works in practice, but if a
+student toggles the setting or the OS rotates the address, the registered MAC stops
+matching and detection silently fails.</p>
+<p>Three responses, in increasing rigour: instruct students to disable "Private Address" for
+the campus SSID; rely on the per-SSID stability of modern implementations and re-register
+when it changes; or abandon MAC as identity and move to <strong>802.1X with WPA2-Enterprise</strong>,
+where RADIUS Accounting-Start and Accounting-Stop packets provide cryptographically
+authenticated identity along with the access point and session times. The third is how a
+real campus would build this, and it is the most valuable direction for future work.</p>
+<h3>Correctness gaps</h3>
+<ul>
+<li>No enrollment model, so session selection is heuristic.</li>
+<li>Sessions must be ended manually; nothing auto-closes them.</li>
+<li>Attendance is a single instant, not a duration, so leaving after five minutes is
+  indistinguishable from staying the whole lecture.</li>
+<li>Attendance percentage divides by <em>all</em> sessions in the database rather than the
+  sessions a student was enrolled in, which understates percentages in a multi-course
+  dataset.</li>
+<li><code>getSessionAttendance</code> uses <code>findAll()</code> and filters in memory, which is fine at demo
+  scale and wrong at institutional scale.</li>
+<li>No NTP/clock-skew handling, although all timestamps come from one server so this only
+  matters in a distributed deployment.</li>
+</ul>
+<hr />
+<h2>20. File-by-file map</h2>
+<h3><code>presence-service/</code> — Node.js scanner</h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/index.js</code></td>
+<td>Scan loop, diffing, WebSocket server, REST API, simulator</td>
+</tr>
+<tr>
+<td><code>src/scanner.js</code></td>
+<td><code>arp -a</code> execution and per-OS parsing; disconnect detection</td>
+</tr>
+<tr>
+<td><code>src/wireless.js</code></td>
+<td>BSSID/SSID/RSSI detection across macOS, Linux, Windows; <code>iw station dump</code></td>
+</tr>
+<tr>
+<td><code>src/config.js</code></td>
+<td>Ports, scan interval, demo BSSIDs</td>
+</tr>
+<tr>
+<td><code>Dockerfile</code></td>
+<td>Container image</td>
+</tr>
+</tbody>
+</table>
+<h3><code>backend/</code> — Spring Boot</h3>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SmartAttendanceApplication.java</code></td>
+<td>Entry point</td>
+</tr>
+<tr>
+<td><code>model/</code></td>
+<td><code>User</code>, <code>Device</code>, <code>Classroom</code>, <code>Session</code>, <code>AttendanceRecord</code>, <code>Role</code></td>
+</tr>
+<tr>
+<td><code>repository/</code></td>
+<td>Five Spring Data interfaces</td>
+</tr>
+<tr>
+<td><code>presence/</code></td>
+<td><code>PresenceConfidence</code>, <code>PresenceSightingStore</code>, <code>MacVendor</code></td>
+</tr>
+<tr>
+<td><code>service/</code></td>
+<td><code>Auth</code>, <code>Device</code>, <code>Classroom</code>, <code>Session</code>, <code>Attendance</code>, <code>PresenceIngestion</code>, <code>PresenceGateway</code></td>
+</tr>
+<tr>
+<td><code>controller/</code></td>
+<td><code>Auth</code>, <code>Student</code>, <code>Faculty</code>, <code>Admin</code>, <code>Report</code></td>
+</tr>
+<tr>
+<td><code>config/</code></td>
+<td><code>SecurityConfig</code>, <code>WebSocketConfig</code>, <code>CorsConfig</code>, <code>DemoDataSeeder</code></td>
+</tr>
+<tr>
+<td><code>security/</code></td>
+<td><code>JwtTokenProvider</code>, <code>JwtAuthenticationFilter</code>, <code>CustomUserDetailsService</code></td>
+</tr>
+<tr>
+<td><code>dto/</code></td>
+<td><code>ApiResponse</code>, <code>AuthResponse</code>, <code>LoginRequest</code>, <code>RegisterRequest</code>, <code>DeviceRequest</code>, <code>SessionRequest</code>, <code>ClassroomRequest</code></td>
+</tr>
+<tr>
+<td><code>resources/application*.properties</code></td>
+<td>Default, MySQL and H2 configuration</td>
+</tr>
+<tr>
+<td><code>src/test/</code></td>
+<td><code>PresenceConfidenceTest</code></td>
+</tr>
+</tbody>
+</table>
+<h3><code>frontend/</code> — React</h3>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/App.jsx</code></td>
+<td>Providers, routing, guards</td>
+</tr>
+<tr>
+<td><code>src/api/api.js</code></td>
+<td>Axios instance, interceptors, all endpoint wrappers</td>
+</tr>
+<tr>
+<td><code>src/context/</code></td>
+<td><code>AuthContext</code>, <code>ToastContext</code></td>
+</tr>
+<tr>
+<td><code>src/pages/</code></td>
+<td>Landing, Login, Register, Student ×2, Faculty ×2, Admin ×3, Reports</td>
+</tr>
+<tr>
+<td><code>src/components/</code></td>
+<td><code>PresenceRadar</code>, <code>ConfidenceBadge</code>, <code>AttendanceHeatmap</code>, <code>PercentRing</code>, <code>CommandPalette</code>, <code>Navbar</code>, <code>ProtectedRoute</code></td>
+</tr>
+<tr>
+<td><code>src/utils/attendanceMath.js</code></td>
+<td>Pure helpers</td>
+</tr>
+<tr>
+<td><code>src/index.css</code></td>
+<td>All styling</td>
+</tr>
+</tbody>
+</table>
+<h3>Root</h3>
+<p><code>docker-compose.yml</code>, <code>README.md</code>, <code>docs/api-contract.md</code>, this file.</p>
+<hr />
+<h2>21. Networking glossary</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning in this project</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ARP</strong></td>
+<td>Address Resolution Protocol (RFC 826). Maps an IPv4 address to a MAC address within one broadcast domain. The original detection mechanism.</td>
+</tr>
+<tr>
+<td><strong>ARP cache</strong></td>
+<td>The OS table of recent IP-to-MAC mappings, read with <code>arp -a</code>. Entries expire, which is why recency is scored.</td>
+</tr>
+<tr>
+<td><strong>MAC address</strong></td>
+<td>48-bit Layer 2 hardware address, written <code>AA:BB:CC:11:22:01</code>. The identity key for a student device.</td>
+</tr>
+<tr>
+<td><strong>OUI</strong></td>
+<td>Organizationally Unique Identifier — the first three octets of a MAC, assigned to a manufacturer. <code>MacVendor</code> uses it for vendor hints.</td>
+</tr>
+<tr>
+<td><strong>BSSID</strong></td>
+<td>MAC address of an access point radio. Because APs live in rooms, it functions as a room identifier.</td>
+</tr>
+<tr>
+<td><strong>SSID</strong></td>
+<td>The human-readable network name, e.g. <code>CAMPUS-WIFI</code>. Many APs share one SSID, which is why BSSID is the useful field.</td>
+</tr>
+<tr>
+<td><strong>RSSI</strong></td>
+<td>Received Signal Strength Indicator, in dBm and always negative. −45 is close, −85 is far. Drives radar distance and the room cutoff.</td>
+</tr>
+<tr>
+<td><strong>dBm</strong></td>
+<td>Decibels relative to one milliwatt. A logarithmic power scale.</td>
+</tr>
+<tr>
+<td><strong>Broadcast domain</strong></td>
+<td>The set of hosts reachable by a Layer 2 broadcast — the scanner's visibility limit.</td>
+</tr>
+<tr>
+<td><strong>CIDR</strong></td>
+<td>Notation like <code>192.168.0.0/16</code> describing a subnet by prefix length. Used for the campus-subnet check.</td>
+</tr>
+<tr>
+<td><strong>RFC 1918</strong></td>
+<td>The private address ranges <code>10/8</code>, <code>172.16/12</code>, <code>192.168/16</code>, the default campus subnets.</td>
+</tr>
+<tr>
+<td><strong>DHCP</strong></td>
+<td>Assigns IP addresses dynamically, which is why IP is unreliable as identity. Option 55 fingerprinting is a proposed anti-spoofing measure.</td>
+</tr>
+<tr>
+<td><strong>NDP</strong></td>
+<td>Neighbor Discovery Protocol, the IPv6 replacement for ARP.</td>
+</tr>
+<tr>
+<td><strong>SLAAC</strong></td>
+<td>IPv6 stateless address autoconfiguration; with privacy extensions (RFC 4941) addresses rotate.</td>
+</tr>
+<tr>
+<td><strong>MAC randomisation</strong></td>
+<td>Per-SSID randomised addresses on iOS 14+/Android 10+. The main real-world threat to this approach.</td>
+</tr>
+<tr>
+<td><strong>802.1X</strong></td>
+<td>Port-based network access control used by WPA2-Enterprise, giving authenticated identity via RADIUS. The rigorous alternative to MAC matching.</td>
+</tr>
+<tr>
+<td><strong>RADIUS</strong></td>
+<td>AAA protocol whose Accounting-Start/Stop records would provide authenticated attendance with AP and timing.</td>
+</tr>
+<tr>
+<td><strong>STOMP</strong></td>
+<td>Simple Text Oriented Messaging Protocol, run over WebSocket to give topic-based subscriptions to browsers.</td>
+</tr>
+<tr>
+<td><strong>SockJS</strong></td>
+<td>WebSocket emulation layer with fallbacks, used under STOMP.</td>
+</tr>
+<tr>
+<td><strong>JWT</strong></td>
+<td>JSON Web Token. Signed, stateless credential carrying the user's email as subject.</td>
+</tr>
+<tr>
+<td><strong>BCrypt</strong></td>
+<td>Adaptive salted password hashing function.</td>
+</tr>
+</tbody>
+</table>
+</body>
+</html>

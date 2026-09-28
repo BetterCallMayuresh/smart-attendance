@@ -28,6 +28,11 @@ public class Session {
     @JoinColumn(name = "faculty_id", nullable = false)
     private User faculty;
 
+    /** Room this session is held in; when set, presence must be proven against its AP. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "classroom_id")
+    private Classroom classroom;
+
     @Column(name = "start_time", nullable = false)
     private LocalDateTime startTime;
 
@@ -39,7 +44,8 @@ public class Session {
 
     @PrePersist
     protected void onCreate() {
-        this.startTime = LocalDateTime.now();
-        this.active = true;
+        if (this.startTime == null) {
+            this.startTime = LocalDateTime.now();
+        }
     }
 }

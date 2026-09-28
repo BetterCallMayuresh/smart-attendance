@@ -42,8 +42,30 @@ public class AttendanceRecord {
     @Column(name = "device_mac")
     private String deviceMac;
 
+    @Column(name = "device_ip")
+    private String deviceIp;
+
+    @Column(name = "confidence_score")
+    private Integer confidenceScore;
+
+    @Column(name = "confidence_level")
+    private String confidenceLevel;
+
+    @Column(name = "confidence_reasons", length = 1000)
+    private String confidenceReasons;
+
+    /** Access point the device was associated with when it was seen. */
+    @Column(name = "observed_bssid")
+    private String observedBssid;
+
+    /** Signal strength in dBm, when the scanner can report per-station values. */
+    @Column(name = "signal_dbm")
+    private Integer signalDbm;
+
     @PrePersist
     protected void onCreate() {
-        this.markedAt = LocalDateTime.now();
+        if (this.markedAt == null) {
+            this.markedAt = LocalDateTime.now();
+        }
     }
 }

@@ -27,4 +27,9 @@ public class ReportController {
         List<Map<String, Object>> report = attendanceService.getReport(course, date);
         return ResponseEntity.ok(ApiResponse.success("Attendance report", report));
     }
+
+    @GetMapping("/analytics")
+    public ResponseEntity<?> getAnalytics() {
+        return ResponseEntity.ok(ApiResponse.success("Analytics", attendanceService.getAnalytics()));
+    }
 }

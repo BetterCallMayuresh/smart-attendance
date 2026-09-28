@@ -13,12 +13,14 @@ const express = require('express');
 const cors = require('cors');
 const { WebSocketServer } = require('ws');
 const { scanNetwork, detectDisconnected } = require('./scanner');
+const { getLocalWireless, getStationSignals } = require('./wireless');
 const config = require('./config');
 
 // ─── State ──────────────────────────────────────────────────────────────────────
 let currentDevices = [];
 let previousDevices = [];
 let scanCount = 0;
+let wirelessContext = { bssid: null, ssid: null, rssi: null, source: 'startup' };
 
 // ─── WebSocket Server ───────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ port: config.WS_PORT });
@@ -64,17 +66,33 @@ function broadcast(data) {
 // ─── Scanner Polling Loop ───────────────────────────────────────────────────────
 async function runScanCycle() {
   try {
-    const devices = await scanNetwork();
+    const [devices, localWireless, stationSignals] = await Promise.all([
+      scanNetwork(),
+      getLocalWireless(),
+      getStationSignals(),
+    ]);
+
+    wirelessContext = localWireless;
+
+    // Tag every ARP entry with the room's access point, and with per-client
+    // signal strength when this host is the AP and can report it.
+    const enriched = devices.map((d) => ({
+      ...d,
+      bssid: localWireless.bssid || null,
+      rssi: stationSignals.has(d.mac) ? stationSignals.get(d.mac) : null,
+    }));
+
+    const simulated = currentDevices.filter((d) => d.simulated);
     previousDevices = currentDevices;
-    currentDevices = devices;
+    currentDevices = [...enriched, ...simulated];
     scanCount++;
 
     // Detect new connections
     const previousMacs = new Set(previousDevices.map((d) => d.mac));
-    const newlyConnected = devices.filter((d) => !previousMacs.has(d.mac));
+    const newlyConnected = enriched.filter((d) => !previousMacs.has(d.mac));
 
     // Detect disconnections
-    const disconnected = detectDisconnected(previousDevices, devices);
+    const disconnected = detectDisconnected(previousDevices, enriched);
 
     // Broadcast events for newly connected devices
     for (const device of newlyConnected) {
@@ -82,11 +100,17 @@ async function runScanCycle() {
         type: 'presence_event',
         mac: device.mac,
         ip: device.ip,
+        bssid: device.bssid,
+        rssi: device.rssi,
         status: 'connected',
         timestamp: device.timestamp,
       };
       broadcast(event);
-      console.log(`[Event] CONNECTED: ${device.mac} (${device.ip})`);
+      console.log(
+        `[Event] CONNECTED: ${device.mac} (${device.ip})` +
+          `${device.bssid ? ` via AP ${device.bssid}` : ''}` +
+          `${device.rssi != null ? ` @ ${device.rssi} dBm` : ''}`
+      );
     }
 
     // Broadcast events for disconnected devices
@@ -107,6 +131,7 @@ async function runScanCycle() {
       broadcast({
         type: 'snapshot',
         devices: currentDevices,
+        bssid: localWireless.bssid || null,
         timestamp: new Date().toISOString(),
       });
     }
@@ -136,6 +161,7 @@ app.get('/presence/current', (req, res) => {
     success: true,
     count: currentDevices.length,
     devices: currentDevices,
+    wireless: wirelessContext,
     lastScan: currentDevices.length > 0 ? currentDevices[0].timestamp : null,
     scanCount,
   });
@@ -153,7 +179,93 @@ app.get('/presence/health', (req, res) => {
     wsClients: wsClients.size,
     scanCount,
     uptime: process.uptime(),
+    simulated: currentDevices.filter((d) => d.simulated).length,
+    bssid: wirelessContext.bssid,
+    wirelessSource: wirelessContext.source,
   });
+});
+
+/**
+ * GET /presence/wireless
+ * Which access point this scanner sees, and how it found out.
+ */
+app.get('/presence/wireless', (req, res) => {
+  res.json({ success: true, wireless: wirelessContext });
+});
+
+/**
+ * POST /presence/simulate
+ * Injects demo classroom devices (AA:BB:CC:11:22:XX) as ARP events.
+ *
+ * The last `outsideCount` devices are placed on a neighbouring access point
+ * with a weak signal, so the demo shows the backend refusing to mark students
+ * who are on campus Wi-Fi but not actually in the room.
+ */
+app.post('/presence/simulate', (req, res) => {
+  const count = Math.min(12, Math.max(1, Number(req.body?.count) || 10));
+  const intervalMs = Math.min(5000, Math.max(400, Number(req.body?.intervalMs) || 1500));
+  const outsideCount = Math.min(count, Math.max(0, Number(req.body?.outsideCount) ?? 2));
+  const inRoomCount = count - outsideCount;
+
+  const roster = [];
+  for (let i = 1; i <= count; i++) {
+    const outside = i > inRoomCount;
+    roster.push({
+      mac: `AA:BB:CC:11:22:${i.toString(16).padStart(2, '0').toUpperCase()}`,
+      ip: `192.168.1.${100 + i}`,
+      type: 'dynamic',
+      status: 'connected',
+      simulated: true,
+      outside,
+      bssid: outside ? config.DEMO_CORRIDOR_BSSID : config.DEMO_ROOM_BSSID,
+      // Strong signals inside the room, weak ones out in the corridor.
+      rssi: outside ? -78 - ((i * 3) % 8) : -42 - ((i * 5) % 20),
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  let delay = 0;
+  roster.forEach((device, index) => {
+    setTimeout(() => {
+      const exists = currentDevices.some((d) => d.mac === device.mac);
+      if (!exists) {
+        currentDevices.push(device);
+      }
+      broadcast({
+        type: 'presence_event',
+        mac: device.mac,
+        ip: device.ip,
+        bssid: device.bssid,
+        rssi: device.rssi,
+        status: 'connected',
+        simulated: true,
+        timestamp: new Date().toISOString(),
+      });
+      console.log(
+        `[Demo] CONNECTED ${index + 1}/${count}: ${device.mac} (${device.ip})` +
+          ` via AP ${device.bssid} @ ${device.rssi} dBm` +
+          `${device.outside ? ' [outside the room]' : ''}`
+      );
+    }, delay);
+    delay += intervalMs;
+  });
+
+  res.json({
+    success: true,
+    message: `Simulating ${inRoomCount} in-room and ${outsideCount} out-of-room devices`,
+    count,
+    inRoomCount,
+    outsideCount,
+    intervalMs,
+    roomBssid: config.DEMO_ROOM_BSSID,
+    corridorBssid: config.DEMO_CORRIDOR_BSSID,
+    devices: roster,
+  });
+});
+
+app.post('/presence/simulate/clear', (req, res) => {
+  currentDevices = currentDevices.filter((d) => !d.simulated);
+  res.json({ success: true, message: 'Simulated devices cleared' });
 });
 
 app.listen(config.REST_PORT, () => {

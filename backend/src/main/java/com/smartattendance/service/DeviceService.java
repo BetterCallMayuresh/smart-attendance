@@ -3,6 +3,7 @@ package com.smartattendance.service;
 import com.smartattendance.dto.DeviceRequest;
 import com.smartattendance.model.Device;
 import com.smartattendance.model.User;
+import com.smartattendance.presence.MacVendor;
 import com.smartattendance.repository.DeviceRepository;
 import com.smartattendance.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +31,13 @@ public class DeviceService {
 
         if (deviceRepository.existsByMacAddress(request.getMacAddress().toUpperCase())) {
             throw new RuntimeException("Device with this MAC address is already registered");
+        }
+
+        boolean hasApprovedDevice = deviceRepository.findByStudent(student)
+                .stream()
+                .anyMatch(Device::isApproved);
+        if (hasApprovedDevice) {
+            throw new RuntimeException("You already have an approved device. Remove it before registering a new one.");
         }
 
         Device device = Device.builder()
@@ -105,6 +113,27 @@ public class DeviceService {
         map.put("approved", d.isApproved());
         map.put("createdAt", d.getCreatedAt());
         map.put("approvedAt", d.getApprovedAt());
+        map.put("vendor", MacVendor.lookup(d.getMacAddress()));
         return map;
+    }
+
+    public int approveDevices(List<Long> ids) {
+        int count = 0;
+        for (Long id : ids) {
+            approveDevice(id);
+            count++;
+        }
+        return count;
+    }
+
+    public void removeStudentDevice(Long deviceId, String email) {
+        User student = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        Device device = deviceRepository.findById(deviceId)
+                .orElseThrow(() -> new RuntimeException("Device not found"));
+        if (!device.getStudent().getId().equals(student.getId())) {
+            throw new RuntimeException("Not authorized to remove this device");
+        }
+        deviceRepository.delete(device);
     }
 }
